@@ -9,8 +9,9 @@ use App\Models\InsDwpTimeAlarmCount;
 use Livewire\WithPagination;
 use Livewire\Attributes\Url;
 use Carbon\Carbon;
+use Livewire\Attributes\Layout;
 
-new class extends Component {
+new #[Layout("layouts.app")] class extends Component {
     use WithPagination;
     use HasDateRangeFilter;
     public array $machineData = [];
@@ -171,16 +172,12 @@ new class extends Component {
             $rightToesHeels = $rightPv[0] ?? [0];
             $rightSides = $rightPv[1] ?? [0];
             $leftData = [
-                // 'side' => round($this->getMax($leftSides)), 
-                // 'toeHeel' => round($this->getMax($leftToesHeels))
-                'side' => round($this->getMedian($leftSides)), 
-                'toeHeel' => round($this->getMedian($leftToesHeels))
+                'side' => round($this->getMax($leftSides)), 
+                'toeHeel' => round($this->getMax($leftToesHeels))
             ];
             $rightData = [
-                // 'side' => round($this->getMax($rightSides)), 
-                // 'toeHeel' => round($this->getMax($rightToesHeels))
-                'side' => round($this->getMedian($rightSides)), 
-                'toeHeel' => round($this->getMedian($rightToesHeels))
+                'side' => round($this->getMax($rightSides)), 
+                'toeHeel' => round($this->getMax($rightToesHeels))
             ];
             // --- FIXED: Correctly calculate average from all recent records ---
             $allPvs = [];
@@ -630,7 +627,7 @@ new class extends Component {
                         console.warn('[DWP Dashboard] onlineSystemMonitoring canvas not found');
                     }
                     
-                     // --- 5. === NEW: DWP TIME CONSTRAINT CHART (line) === ---
+                    // --- 5. === NEW: DWP TIME CONSTRAINT CHART (line) === ---
                     const dwpCtx = document.getElementById('dwpTimeConstraintChart');
                     if (dwpCtx) {
                         try {
@@ -639,34 +636,68 @@ new class extends Component {
                                 try { window.__dwpTimeConstraintChart.destroy(); } catch(e){}
                             }
                             window.__dwpTimeConstraintChart = new Chart(ctx3, {
-                                type: 'line',
-                                data: dwpData, // Use the injected data
-                                options: {
-                                    responsive: true,
-                                    maintainAspectRatio: false,
-                                    scales: {
-                                        x: {
-                                            grid: { color: theme.gridColor },
-                                            ticks: { color: theme.textColor }
+                            type: 'line',
+                            data: dwpData,
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                scales: {
+                                    x: {
+                                        grid: { 
+                                            display: true,
+                                            color: '#e5e7eb',
+                                            drawBorder: true,
+                                            drawOnChartArea: true,
+                                            drawTicks: true,
                                         },
-                                        y: {
-                                            beginAtZero: true,
-                                            grid: { color: theme.gridColor },
-                                            ticks: { color: theme.textColor }
+                                        ticks: { 
+                                            color: '#000000',
+                                            font: { size: 11 }
                                         }
                                     },
-                                    plugins: {
-                                        legend: {
-                                            position: 'bottom', // Matches your image
-                                            labels: { color: theme.textColor }
+                                    y: {
+                                        beginAtZero: true,
+                                        grid: { 
+                                            display: true,
+                                            color: '#e5e7eb',
+                                            drawBorder: true,
+                                            drawOnChartArea: true,
+                                            drawTicks: true
                                         },
-                                        tooltip: {
-                                            bodyColor: theme.textColor,
-                                            titleColor: theme.textColor
+                                        ticks: { 
+                                            color: '#000000',
+                                            font: { size: 16 }
                                         }
                                     }
+                                },
+                                plugins: {
+                                    legend: {
+                                        position: 'bottom',
+                                        labels: { color: '#000000' }
+                                    },
+                                    tooltip: {
+                                        enabled: true
+                                    }
                                 }
-                            });
+                            },
+                            plugins: [{
+                                afterDatasetsDraw: function(chart) {
+                                    const ctx = chart.ctx;
+                                    chart.data.datasets.forEach((dataset, i) => {
+                                        const meta = chart.getDatasetMeta(i);
+                                        meta.data.forEach((element, index) => {
+                                            const value = dataset.data[index];
+                                            if (value > 0) {
+                                                ctx.font = 'bold 15px sans-serif';
+                                                ctx.fillStyle = dataset.borderColor;
+                                                ctx.textAlign = 'center';
+                                                ctx.fillText(value, element.x, element.y - (-15));
+                                            }
+                                        });
+                                    });
+                                }
+                            }]
+                        });
                         } catch (e) { console.error('[DWP Dashboard] injected dwp chart error', e); }
                     } else {
                         console.warn('[DWP Dashboard] dwpTimeConstraintChart canvas not found');
@@ -835,83 +866,46 @@ new class extends Component {
     }
 }; ?>
 
-<div>
-    <div class="grid grid-cols-1 lg:grid-cols-1 gap-6 mb-6">
-    <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-4 flex items-center">
-            <div>
-                <div class="flex mb-2 text-xs text-neutral-500">
-                    <x-dropdown align="left" width="48">
-                        <x-slot name="trigger">
-                            <x-text-button class="uppercase ml-3">
-                                {{ __("Rentang") }}
-                                <i class="icon-chevron-down ms-1"></i>
-                            </x-text-button>
-                        </x-slot>
-                        <x-slot name="content">
-                            <x-dropdown-link href="#" wire:click.prevent="setToday">
-                                    {{ __("Hari ini") }}
-                                </x-dropdown-link>
-                                <x-dropdown-link href="#" wire:click.prevent="setYesterday">
-                                    {{ __("Kemarin") }}
-                                </x-dropdown-link>
-                                <hr class="border-neutral-300 dark:border-neutral-600" />
-                                <x-dropdown-link href="#" wire:click.prevent="setThisWeek">
-                                    {{ __("Minggu ini") }}
-                                </x-dropdown-link>
-                                <x-dropdown-link href="#" wire:click.prevent="setLastWeek">
-                                    {{ __("Minggu lalu") }}
-                                </x-dropdown-link>
-                                <hr class="border-neutral-300 dark:border-neutral-600" />
-                                <x-dropdown-link href="#" wire:click.prevent="setThisMonth">
-                                    {{ __("Bulan ini") }}
-                                </x-dropdown-link>
-                                <x-dropdown-link href="#" wire:click.prevent="setLastMonth">
-                                    {{ __("Bulan lalu") }}
-                                </x-dropdown-link>
-                        </x-slot>
-                    </x-dropdown>
+<div class="p-4">
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <!-- Sidebar: Left Column (1/4 on lg) -->
+        <div class="lg:col-span-1 space-y-6">
+            <!-- Time Constraint Alarm -->
+            <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
+                <div class="font-semibold text-neutral-700 dark:text-neutral-200 text-xl mb-4">
+                    Time Constraint Alarm
                 </div>
-                <div class="flex gap-3">
-                    <x-text-input wire:model.live="start_at" type="date" class="w-40" />
-                    <x-text-input wire:model.live="end_at" type="date" class="w-40" />
+                <div class="space-y-4">
+                    <div>
+                        <p class="text-md text-neutral-600 dark:text-neutral-400">Long Queue time</p>
+                        <p class="text-3xl font-bold">{{ $this->longestQueueTime }} <span class="text-base">sec</span></p>
+                    </div>
+                    <div>
+                        <p class="text-md text-neutral-600 dark:text-neutral-400">Alarm Active</p>
+                        <p class="text-3xl font-bold">{{ $this->alarmsActive }}</p>
+                    </div>
                 </div>
             </div>
-            <div class="border-l border-neutral-300 dark:border-neutral-700 mx-4 h-16"></div>
-            <div>
-                <label class="block px-3 mb-2 uppercase text-xs text-neutral-500">{{ __("Line") }}</label>
-                <x-select wire:model.live="line" class="w-full lg:w-32">
-                    @foreach($this->getDataLine() as $lineData)
-                        <option value="{{$lineData['line']}}">{{$lineData['line']}}</option>
-                    @endforeach
-                </x-select>
-            </div>
-        </div>
-    </div>
-    <!-- end filter section -->
 
-    <!-- Content Section -->
-    <div class="grid grid-cols-1 gap-6">
-        <!-- Top Row: 3 Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <!-- Card 59: Performance Machine -->
+            <!-- Performance Machine -->
             <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
                 <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-4">Performance Machine</h2>
-                <div class="">
-                    <canvas class="h-[150px]" id="dailyPerformanceChart"></canvas>
+                <div class="h-[150px]">
+                    <canvas id="dailyPerformanceChart" wire:ignore></canvas>
                 </div>
                 <div class="flex flex-col gap-2 mt-4">
                     <div class="flex items-center gap-2">
                         <span class="w-4 h-4 rounded bg-green-500"></span>
-                        <span>Standard : {{ $this->totalStandart }}</span>
+                        <span>Standard: {{ $this->totalStandart }}</span>
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="w-4 h-4 rounded bg-red-600"></span>
-                        <span>Out Of Standard : {{ $this->totalOutStandart }}</span>
+                        <span>Out Of Standard: {{ $this->totalOutStandart }}</span>
                     </div>
                 </div>
             </div>
 
-            <!-- Card 60: Online System Monitoring -->
+            <!-- Online System Monitoring -->
             <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200">
@@ -919,8 +913,8 @@ new class extends Component {
                     </h2>
                     <span class="text-sm text-neutral-600 dark:text-neutral-400">{{ $this->fullTimeFormat }}</span>
                 </div>
-                <div class="relative">
-                    <canvas class="h-[150px]" id="onlineSystemMonitoring" wire:ignore></canvas>
+                <div class="h-[150px]">
+                    <canvas id="onlineSystemMonitoring" wire:ignore></canvas>
                 </div>
                 <div class="flex flex-col gap-2 mt-4">
                     <div class="flex items-center gap-2">
@@ -928,117 +922,88 @@ new class extends Component {
                         <span>Online</span>
                     </div>
                     <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-gray-300"></span>
+                        <span class="w-4 h-4 rounded bg-gray-300 dark:bg-gray-600"></span>
                         <span>Offline</span>
                     </div>
                 </div>
             </div>
-
-            <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md gap-4 flex flex-col">
-                <div class="flex flex-col w-full font-semibold text-neutral-700 dark:text-neutral-200 text-xl">
-                    Time Constraint Alarm
-                </div>
-                <div class="mt-4 space-y-2">
-                    <p class="text-md">Long Queue time</p>
-                    <p class="text-3xl font-bold">{{ $this->longestQueueTime }} <span>sec</span></p>
-                </div>
-                <div class="mt-4 space-y-2">
-                    <p class="text-md">Alarm Active</p>
-                    <p class="text-3xl font-bold">{{ $this->alarmsActive }}</p>
-                </div>
-            </div>
-        </div>
-        <!-- Middle Section: Chart Placeholder -->
-        <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
-            <h1 class="text-xl font-bold text-center">DWP Time Constraint</h1>
-            <!-- You can replace this with your actual chart or component -->
-            <div class="h-64 bg-gray-100 dark:bg-neutral-700 rounded mt-4 flex items-center justify-center">
-                <canvas id="dwpTimeConstraintChart" wire:ignore></canvas>
-            </div>
         </div>
 
-        <!-- Bottom Section -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
-            <!-- Row 1: Two Cards (51 & 52) -->
-            <div class="bg-white dark:bg-neutral-800 p-2 rounded-lg shadow-md">
-                <h2 class="text-md text-center text-slate-800 dark:text-slate-200">
-                    Standard Machine #1: <span>{{ $this->stdRange[0]}} ~ {{$this->stdRange[1]}} kg</span>
-                </h2>
+        <!-- Main Content: Right Column (3/4 on lg) -->
+        <div class="lg:col-span-3 space-y-6">
+            <!-- DWP Time Constraint Chart -->
+            <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md h-[350px]">
+                <h1 class="text-xl font-bold text-center mb-4">DWP Time Constraint</h1>
+                <div class="h-[250px]">
+                    <canvas id="dwpTimeConstraintChart" wire:ignore></canvas>
+                </div>
             </div>
 
-            <div class="bg-white dark:bg-neutral-800 p-2 rounded-lg shadow-md">
-                <h2 class="text-md text-center text-slate-800 dark:text-slate-200">
-                    Standard Machine #2 : <span>{{ $this->stdRange[0]}} ~ {{$this->stdRange[1]}} kg</span>
-                </h2>
+            <!-- Standard Machine Labels -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                @for($i = 1; $i <= 4; $i++)
+                    <div class="bg-white dark:bg-neutral-800 p-3 rounded-lg shadow-md text-center">
+                        <h2 class="text-sm text-slate-800 dark:text-slate-200">
+                            Standard Machine #{{ $i }}: <span>{{ $this->stdRange[0] }} ~ {{ $this->stdRange[1] }} kg</span>
+                        </h2>
+                    </div>
+                @endfor
             </div>
-            <div class="bg-white dark:bg-neutral-800 p-2 rounded-lg shadow-md">
-                <h2 class="text-md text-center text-slate-800 dark:text-slate-200">
-                    Standard Machine #3: <span>{{ $this->stdRange[0]}} ~ {{$this->stdRange[1]}} kg</span>
-                </h2>
-            </div>
-            <div class="bg-white dark:bg-neutral-800 p-2 rounded-lg shadow-md">
-                <h2 class="text-md text-center text-slate-800 dark:text-slate-200">
-                    Standard Machine #4 : <span>{{ $this->stdRange[0]}} ~ {{$this->stdRange[1]}} kg</span>
-                </h2>
-            </div>
-        </div>
-        <div wire:key="machine-data" wire:poll.20s="updateData" class="grid grid-cols-1 md:grid-cols-2 gap-2">
-            <!-- Note: We use a nested grid inside the col-span-2 -->
-            <div class="col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                @forelse ($machineData as $machine)
-                    <div class="relative p-6 bg-white dark:bg-neutral-800 border-4 shadow-md rounded-xl
-                        @if($machine['overallStatus'] == 'alert') border-red-500 @else border-transparent @endif">
-                        <div class="absolute top-[20px] -left-5 px-2 py-2 bg-white dark:bg-neutral-800
-                            border-4 rounded-lg text-2xl font-bold
-                            @if($machine['overallStatus'] == 'alert') border-red-500 @else bg-green-500 @endif">
-                            #{{ $machine['name'] }}
-                        </div>
-                        <div class="rounded-lg transition-colors duration-300">
-                            <div class="grid grid-cols-2 gap-2 text-center">
-                                <div>
-                                    <h4 class="font-semibold text-neutral-700 dark:text-neutral-200">LEFT</h4>
-                                    <p class="text-sm text-neutral-600 dark:text-neutral-400">Toe/Hell</p>
-                                    <div class="p-2 rounded-md text-white font-bold text-lg mb-2
-                                        @if($machine['sensors']['left']['toeHeel']['status'] == 'alert') bg-red-500 @else bg-green-500 @endif">
-                                        {{ $machine['sensors']['left']['toeHeel']['value'] }}
-                                    </div>
-                                    <p class="text-sm text-neutral-600 dark:text-neutral-400">Side</p>
-                                    <div class="p-2 rounded-md text-white font-bold text-lg
-                                        @if($machine['sensors']['left']['side']['status'] == 'alert') bg-red-500 @else bg-green-500 @endif">
-                                        {{ $machine['sensors']['left']['side']['value'] }}
-                                    </div>
-                                </div>
-                                <div>
-                                    <h4 class="font-semibold text-neutral-700 dark:text-neutral-200">RIGHT</h4>
-                                    <p class="text-sm text-neutral-600 dark:text-neutral-400">Toe/Hell</p>
-                                    <div class="p-2 rounded-md text-white font-bold text-lg mb-2
-                                        @if($machine['sensors']['right']['toeHeel']['status'] == 'alert') bg-red-500 @else bg-green-500 @endif">
-                                        {{ $machine['sensors']['right']['toeHeel']['value'] }}
-                                    </div>
-                                    <p class="text-sm text-neutral-600 dark:text-neutral-400">Side</p>
-                                    <div class="p-2 rounded-md text-white font-bold text-lg
-                                        @if($machine['sensors']['right']['side']['status'] == 'alert') bg-red-500 @else bg-green-500 @endif">
-                                        {{ $machine['sensors']['right']['side']['value'] }}
-                                    </div>
-                                </div>
+
+            <!-- Machine Data Cards -->
+            <div wire:key="machine-data" wire:poll.20s="updateData">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                    @forelse ($machineData as $machine)
+                        <div class="relative p-6 bg-white dark:bg-neutral-800 border-4 shadow-md rounded-xl
+                            {{ $machine['overallStatus'] == 'alert' ? 'border-red-500' : 'border-transparent' }}">
+                            <div class="absolute top-[20px] -left-5 px-2 py-2 bg-white dark:bg-neutral-800
+                                border-4 rounded-lg text-slate-800 dark:text-slate-200 text-2xl font-bold
+                                {{ $machine['overallStatus'] == 'alert' ? 'border-red-500' : 'bg-green-500' }}">
+                                #{{ $machine['name'] }}
                             </div>
-                            <!-- Output Section -->
-                            <div class="grid grid-cols-1 gap-2 text-center mt-4">
-                                <div>
-                                    <h2 class="text-md text-neutral-600 dark:text-neutral-400">Output</h2>
-                                    <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg mb-2">
-                                        <!-- {{ $machine['output']['left'] ?? 0 }} -->
-                                        {{ ($machine['output']['left'] ?? 0) + ($machine['output']['right'] ?? 0) }}
+                            <div class="mt-8">
+                                <div class="grid grid-cols-2 gap-2 text-center">
+                                    <div>
+                                        <h4 class="font-semibold text-neutral-700 dark:text-neutral-200">LEFT</h4>
+                                        <p class="text-xs text-neutral-600 dark:text-neutral-400">Toe/Heel</p>
+                                        <div class="p-2 rounded-md text-white font-bold text-lg mb-2
+                                            {{ $machine['sensors']['left']['toeHeel']['status'] == 'alert' ? 'bg-red-500' : 'bg-green-500' }}">
+                                            {{ $machine['sensors']['left']['toeHeel']['value'] }}
+                                        </div>
+                                        <p class="text-xs text-neutral-600 dark:text-neutral-400">Side</p>
+                                        <div class="p-2 rounded-md text-white font-bold text-lg
+                                            {{ $machine['sensors']['left']['side']['status'] == 'alert' ? 'bg-red-500' : 'bg-green-500' }}">
+                                            {{ $machine['sensors']['left']['side']['value'] }}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 class="font-semibold text-neutral-700 dark:text-neutral-200">RIGHT</h4>
+                                        <p class="text-xs text-neutral-600 dark:text-neutral-400">Toe/Heel</p>
+                                        <div class="p-2 rounded-md text-white font-bold text-lg mb-2
+                                            {{ $machine['sensors']['right']['toeHeel']['status'] == 'alert' ? 'bg-red-500' : 'bg-green-500' }}">
+                                            {{ $machine['sensors']['right']['toeHeel']['value'] }}
+                                        </div>
+                                        <p class="text-xs text-neutral-600 dark:text-neutral-400">Side</p>
+                                        <div class="p-2 rounded-md text-white font-bold text-lg
+                                            {{ $machine['sensors']['right']['side']['status'] == 'alert' ? 'bg-red-500' : 'bg-green-500' }}">
+                                            {{ $machine['sensors']['right']['side']['value'] }}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="text-center mt-4">
+                                    <h3 class="text-sm text-neutral-600 dark:text-neutral-400">Output</h3>
+                                    <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg">
+                                        {{ $machine['output']['left'] ?? 0 }}
                                     </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                @empty
-                    <div class="col-span-4 text-center text-neutral-500 p-6">
-                        No machine data available for the selected line.
-                    </div>
-                @endforelse
+                    @empty
+                        <div class="col-span-4 text-center text-neutral-500 py-8">
+                            No machine data available for the selected line.
+                        </div>
+                    @endforelse
+                </div>
             </div>
         </div>
     </div>
