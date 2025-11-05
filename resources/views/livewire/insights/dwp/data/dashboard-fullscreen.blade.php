@@ -742,7 +742,7 @@ new #[Layout("layouts.app")] class extends Component {
 
     private function calculatePeriod(): object
     {
-        $start = InsDwpTimeAlarmCount::where('created_at', '>=', now()->startOfDay())
+        $start = InsDwpCount::where('created_at', '>=', now()->startOfDay())
             ->where('created_at', '<=', now()->endOfDay())
             ->min('created_at');
 

@@ -711,7 +711,7 @@ new class extends Component {
 
     private function calculatePeriod(): object
     {
-        $start = InsDwpTimeAlarmCount::where('created_at', '>=', now()->startOfDay())
+        $start = InsDwpCount::where('created_at', '>=', now()->startOfDay())
             ->where('created_at', '<=', now()->endOfDay())
             ->min('created_at');
 
@@ -837,18 +837,21 @@ new class extends Component {
 
 <div>
     <div class="grid grid-cols-1 lg:grid-cols-1 gap-6 mb-6">
-    <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-4 flex items-center">
-            <div>
-                <div class="flex mb-2 text-xs text-neutral-500">
-                    <x-dropdown align="left" width="48">
-                        <x-slot name="trigger">
-                            <x-text-button class="uppercase ml-3">
-                                {{ __("Rentang") }}
-                                <i class="icon-chevron-down ms-1"></i>
-                            </x-text-button>
-                        </x-slot>
-                        <x-slot name="content">
-                            <x-dropdown-link href="#" wire:click.prevent="setToday">
+        <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-4 flex items-center justify-between">
+            
+            <div class="flex items-center">
+                
+                <div>
+                    <div class="flex mb-2 text-xs text-neutral-500">
+                        <x-dropdown align="left" width="48">
+                            <x-slot name="trigger">
+                                <x-text-button class="uppercase ml-3">
+                                    {{ __("Rentang") }}
+                                    <i class="icon-chevron-down ms-1"></i>
+                                </x-text-button>
+                            </x-slot>
+                            <x-slot name="content">
+                                <x-dropdown-link href="#" wire:click.prevent="setToday">
                                     {{ __("Hari ini") }}
                                 </x-dropdown-link>
                                 <x-dropdown-link href="#" wire:click.prevent="setYesterday">
@@ -868,22 +871,31 @@ new class extends Component {
                                 <x-dropdown-link href="#" wire:click.prevent="setLastMonth">
                                     {{ __("Bulan lalu") }}
                                 </x-dropdown-link>
-                        </x-slot>
-                    </x-dropdown>
+                            </x-slot>
+                        </x-dropdown>
+                    </div>
+                    <div class="flex gap-3">
+                        <x-text-input wire:model.live="start_at" type="date" class="w-40" />
+                        <x-text-input wire:model.live="end_at" type="date" class="w-40" />
+                    </div>
                 </div>
-                <div class="flex gap-3">
-                    <x-text-input wire:model.live="start_at" type="date" class="w-40" />
-                    <x-text-input wire:model.live="end_at" type="date" class="w-40" />
+
+                <div class="border-l border-neutral-300 dark:border-neutral-700 mx-4 h-16"></div>
+
+                <div>
+                    <label class="block px-3 mb-2 uppercase text-xs text-neutral-500">{{ __("Line") }}</label>
+                    <x-select wire:model.live="line" class="w-full lg:w-32">
+                        @foreach($this->getDataLine() as $lineData)
+                            <option value="{{$lineData['line']}}">{{$lineData['line']}}</option>
+                        @endforeach
+                    </x-select>
                 </div>
             </div>
-            <div class="border-l border-neutral-300 dark:border-neutral-700 mx-4 h-16"></div>
-            <div>
-                <label class="block px-3 mb-2 uppercase text-xs text-neutral-500">{{ __("Line") }}</label>
-                <x-select wire:model.live="line" class="w-full lg:w-32">
-                    @foreach($this->getDataLine() as $lineData)
-                        <option value="{{$lineData['line']}}">{{$lineData['line']}}</option>
-                    @endforeach
-                </x-select>
+            <div class="">
+                <a href="/insights/dwp/data/fullscreen">
+                    <span class="icon-expand font-bold text-2xl">
+                    </span>
+                </a>
             </div>
         </div>
     </div>

@@ -17,7 +17,7 @@ class InsDwpPoll extends Command
     protected $modbusPort = 503;
 
     // Cycle detection configuration
-    protected $cycleStartThreshold = 10; // Value to detect the start of a cycle (now used by 'capturing' state)
+    protected $cycleStartThreshold = 2; // Value to detect the start of a cycle (now used by 'capturing' state)
     protected $toeHeelEndThreshold = 0; // Value to detect end of toe/heel cycle
     // Note: sideEndThreshold is no longer needed in the new logic but left for context
     protected $sideEndThreshold = 0;
@@ -216,105 +216,134 @@ class InsDwpPoll extends Command
         $toeHeelValue = (int) $data['toe_heel'];
         $sideValue = (int) $data['side'];
         $cycleKey = "{$line}-{$machineName}-{$position}";
+        $endThreshold = 2; // hysteresis
+        $minSamples = 3;
 
-        // Initialize or load state
         if (!isset($this->cycleStates[$cycleKey])) {
             $this->cycleStates[$cycleKey] = ['state' => 'idle'];
         }
-        $state = &$this->cycleStates[$cycleKey]; // reference for in-place update
+        $state = &$this->cycleStates[$cycleKey];
 
         // Failsafe timeout
         if ($state['state'] !== 'idle' && (time() - ($state['start_time'] ?? 0)) > $this->cycleTimeoutSeconds) {
-            if ($this->option('d')) {
-                $this->warn("Cycle {$cycleKey} timed out. Discarding.");
-            }
+            if ($this->option('d')) $this->warn("Cycle {$cycleKey} timed out.");
             $state = ['state' => 'idle'];
         }
 
-        // ----------------------------
-        // STATE: IDLE
-        // ----------------------------
         if ($state['state'] === 'idle') {
-            // Start cycle if EITHER sensor crosses threshold (≥10)
             if ($toeHeelValue >= $this->cycleStartThreshold || $sideValue >= $this->cycleStartThreshold) {
                 $state = [
                     'state' => 'active',
                     'start_time' => time(),
-                    'th_buffer' => [$toeHeelValue],
-                    'side_buffer' => [$sideValue],
+                    'th_buffer' => [$toeHeelValue], // Buffer the *first* active value
+                    'side_buffer' => [$sideValue], // Buffer the *first* active value
+                    'end_count' => 0,
                 ];
                 if ($this->option('d')) {
                     $this->line("Cycle started for {$cycleKey}: TH={$toeHeelValue}, Side={$sideValue}");
                 }
             }
-            return 0; // nothing saved yet
+            return 0;
         }
 
-        // ----------------------------
-        // STATE: ACTIVE (buffering)
-        // ----------------------------
         if ($state['state'] === 'active') {
-            // Append current values
-            $state['th_buffer'][] = $toeHeelValue;
-            $state['side_buffer'][] = $sideValue;
+            $shouldEnd = false; // <-- NEW: Initialize
 
-            // Check if cycle should end: both signals ≤ 0 (or very low)
-            $endThreshold = 0; // or 2 if you want hysteresis
-            $shouldEnd = ($toeHeelValue <= $endThreshold && $sideValue <= $endThreshold);
+            // Debounced end condition
+            if ($toeHeelValue <= $endThreshold && $sideValue <= $endThreshold) {
+                // Value is at or near zero, increment end counter
+                $state['end_count']++;
+                $shouldEnd = $state['end_count'] >= 2;
+            } else {
+                // Value is active, buffer it
+                $state['th_buffer'][] = $toeHeelValue;     // <-- CHANGED: Moved inside else
+                $state['side_buffer'][] = $sideValue;     // <-- CHANGED: Moved inside else
+                // And reset the end counter
+                $state['end_count'] = 0;
+                $shouldEnd = false;
+            }
 
             if ($shouldEnd) {
-                // Extract peaks
+                if (count($state['th_buffer']) < $minSamples) {
+                    if ($this->option('d')) {
+                        $this->line("Cycle {$cycleKey} too short (" . count($state['th_buffer']) . " samples). Discarded.");
+                    }
+                    $state = ['state' => 'idle'];
+                    return 0;
+                }
+                
+                // <-- NEW: Add a single zero to the end for a clean cutoff
+                $state['th_buffer'][] = 0;
+                $state['side_buffer'][] = 0;
+                
                 $maxTh = max($state['th_buffer']);
                 $maxSide = max($state['side_buffer']);
-
-                // Validate: both peaks must be in [30, 45]
                 $isValid = (
                     $maxTh >= $this->goodValueMin && $maxTh <= $this->goodValueMax &&
                     $maxSide >= $this->goodValueMin && $maxSide <= $this->goodValueMax
                 );
 
                 if ($isValid) {
-                    // Save full buffers as pv
+                    // Calculate duration *before* resetting state
+                    $durationInSeconds = time() - $state['start_time']; // <-- Using your duration logic
+
+                    // Normalize to fixed length (e.g., 64)
                     $collectedData = [
-                        $state['th_buffer'],
-                        $state['side_buffer']
+                        $this->normalizeWaveform($state['th_buffer']),
+                        $this->normalizeWaveform($state['side_buffer'])
                     ];
 
-                    // Save to DB (returns 1 on success)
-                    $saved = $this->saveSuccessfulCycle($line, $machineName, $position, $collectedData, 0);
-
+                    $saved = $this->saveSuccessfulCycle($line, $machineName, $position, $collectedData, $durationInSeconds); // <-- Pass duration
                     if ($this->option('d')) {
-                        $this->line("✅ Valid cycle saved for {$cycleKey}. TH peak: {$maxTh}, Side peak: {$maxSide}");
+                        $this->line("✅ Valid cycle saved for {$cycleKey}. Peaks: TH={$maxTh}, Side={$maxSide}");
                     }
-
-                    // Reset state
                     $state = ['state' => 'idle'];
                     return $saved;
                 } else {
-                    // Invalid cycle (e.g., noise, partial press)
                     if ($this->option('d')) {
-                        $this->line("❌ Invalid cycle for {$cycleKey}. TH peak: {$maxTh}, Side peak: {$maxSide} → discarded.");
+                        $this->line("❌ Invalid cycle for {$cycleKey}. Peaks: TH={$maxTh}, Side={$maxSide}");
                     }
                     $state = ['state' => 'idle'];
                     return 0;
                 }
             }
 
-            // Optional: prevent infinite buffering (e.g., max 100 samples)
-            $maxBufferSize = 100;
-            if (count($state['th_buffer']) > $maxBufferSize) {
-                if ($this->option('d')) {
-                    $this->warn("Buffer overflow for {$cycleKey}. Resetting.");
-                }
+            // Prevent buffer overflow
+            if (count($state['th_buffer']) > 100) {
                 $state = ['state' => 'idle'];
             }
 
-            return 0; // still buffering
+            return 0;
         }
 
         return 0;
     }
 
+    private function normalizeWaveform(array $buffer, int $targetLength = 30): array
+    {
+        $currentLength = count($buffer);
+        if ($currentLength === $targetLength) {
+            return $buffer;
+        }
+
+        $normalized = [];
+        for ($i = 0; $i < $targetLength; $i++) {
+            $ratio = $i / ($targetLength - 1);
+            $index = $ratio * ($currentLength - 1);
+            $floor = (int) floor($index);
+            $ceil = min($floor + 1, $currentLength - 1);
+            $weight = $index - $floor;
+
+            if ($floor === $ceil) {
+                $normalized[] = $buffer[$floor];
+            } else {
+                $normalized[] = (int) round(
+                    $buffer[$floor] * (1 - $weight) + $buffer[$ceil] * $weight
+                );
+            }
+        }
+        return $normalized;
+    }
 
     private function saveSuccessfulCycle(string $line, string $machineName, string $position, array $collectedData, int $duration)
     {
