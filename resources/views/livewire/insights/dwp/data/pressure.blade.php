@@ -26,13 +26,20 @@ new #[Layout("layouts.app")] class extends Component {
     #[Url]
     public string $line = "G5";
 
-    // Selected machine filter (bound to the view via wire:model)
     #[Url]
     public string $machine = "";
 
     public array $devices = [];
     public int $perPage = 20;
     public string $view = "pressure";
+    
+    // Deviation tracking properties
+    public array $deviationSummary = [];
+    public array $severityBreakdown = [];
+    public int $progress = 0;
+    
+    // Standard ranges
+    private array $stdRange = [30, 45];
 
     public function mount()
     {
@@ -71,25 +78,19 @@ new #[Layout("layouts.app")] class extends Component {
             $query->where("ins_dwp_counts.line", "like", "%" . strtoupper(trim($this->line)) . "%");
         }
 
-        if (!empty($this->machine)) { // Changed from $this->mechine to $this->machine
-            // allow numeric or string machine identifier
-            $query->where('ins_dwp_counts.mechine', $this->machine); // Changed from $this->mechine to $this->machine
+        if (!empty($this->machine)) {
+            $query->where('ins_dwp_counts.mechine', $this->machine);
         }
 
         return $query->orderBy("ins_dwp_counts.created_at", "DESC");
     }
 
-    /**
-     * GET DATA MACHINES
-     * Description : This code for get data machines on database ins_dwp_device
-     */
     private function getDataMachines($selectedLine = null)
     {
         if (!$selectedLine) {
             return [];
         }
 
-        // Query for the specific device that handles this line to avoid loading all of them.
         $device = InsDwpDevice::whereJsonContains('config', [['line' => strtoupper($selectedLine)]])
             ->select('config')
             ->first();
@@ -104,13 +105,9 @@ new #[Layout("layouts.app")] class extends Component {
         return [];
     }
 
-    /**
-     * Helper function to calculate median
-     */
     private function getMedian(array $array)
     {
         if (empty($array)) return 0;
-        // Filter out non-numeric values
         $numericArray = array_filter($array, 'is_numeric');
         if (empty($numericArray)) return 0;
         
@@ -122,13 +119,10 @@ new #[Layout("layouts.app")] class extends Component {
         return round($median);
     }
 
-    /**
-     * Calculates the 5-point summary (min, q1, median, q3, max) for a boxplot.
-     */
     private function getBoxplotSummary(array $data): ?array
     {
         if (empty($data)) {
-            return null; // Return null if there is no data
+            return null;
         }
 
         sort($data);
@@ -136,13 +130,11 @@ new #[Layout("layouts.app")] class extends Component {
         $min = $data[0];
         $max = $data[$count - 1];
 
-        // Median (Q2)
         $mid_index = (int)floor($count / 2);
         $median = ($count % 2 === 0)
             ? ($data[$mid_index - 1] + $data[$mid_index]) / 2
             : $data[$mid_index];
 
-        // Q1 (Median of lower half)
         $lower_half = array_slice($data, 0, $mid_index);
         $q1 = 0;
         if (!empty($lower_half)) {
@@ -155,7 +147,6 @@ new #[Layout("layouts.app")] class extends Component {
             $q1 = $min;
         }
         
-        // Q3 (Median of upper half)
         $upper_half = array_slice($data, ($count % 2 === 0) ? $mid_index : $mid_index + 1);
         $q3 = 0;
         if (!empty($upper_half)) {
@@ -168,15 +159,122 @@ new #[Layout("layouts.app")] class extends Component {
              $q3 = $max;
         }
         
-        // Return the 5-point summary, rounded
         return array_map(fn($v) => round($v, 2), [$min, $q1, $median, $q3, $max]);
+    }
+
+    /**
+     * Calculate deviation statistics based on pressure readings
+     * Threshold: Minor (<5 KG), Major (>5 KG), Critical (>10 KG)
+     */
+    private function calculateDeviations()
+    {
+        $dataRaw = InsDwpCount::select("ins_dwp_counts.*")
+            ->whereBetween("ins_dwp_counts.created_at", [
+                Carbon::parse($this->start_at),
+                Carbon::parse($this->end_at)->endOfDay(),
+            ]);
+
+        if ($this->line) {
+            $dataRaw->where("ins_dwp_counts.line", "like", "%" . strtoupper(trim($this->line)) . "%");
+        }
+
+        if (!empty($this->machine)) {
+            $dataRaw->where('ins_dwp_counts.mechine', $this->machine);
+        }
+
+        $pressureData = $dataRaw->whereNotNull('pv')->get();
+        
+        $totalMeasurements = $pressureData->count();
+        $totalSections = 0;
+        $totalDeviations = 0;
+        $deviationSections = 0;
+        $majorPlusDeviations = 0;
+        $majorPlusSections = 0;
+        $criticalDeviations = 0;
+        $criticalSections = 0;
+        $severityCount = ["minor" => 0, "major" => 0, "critical" => 0];
+
+        $minStd = $this->stdRange[0];
+        $maxStd = $this->stdRange[1];
+
+        foreach ($pressureData as $record) {
+            $pv = json_decode($record->pv, true);
+            
+            if (!is_array($pv) || count($pv) < 2) {
+                continue;
+            }
+
+            $toeHeelArray = $pv[0] ?? [];
+            $sideArray = $pv[1] ?? [];
+            
+            // Process each sensor value (4 sections: TH-L, TH-R, Side-L, Side-R)
+            $allValues = array_merge($toeHeelArray, $sideArray);
+            
+            foreach ($allValues as $value) {
+                if (!is_numeric($value)) continue;
+                
+                $totalSections++;
+                
+                // Calculate deviation from standard range [30, 45]
+                $deviation = 0;
+                if ($value < $minStd) {
+                    $deviation = $minStd - $value;
+                } elseif ($value > $maxStd) {
+                    $deviation = $value - $maxStd;
+                }
+                
+                if ($deviation > 0) {
+                    $totalDeviations++;
+                    $deviationSections++;
+                    
+                    // NEW THRESHOLD: Minor (<5 KG), Major (>5 KG), Critical (>10 KG)
+                    if ($deviation > 10) {
+                        // Critical: >10 KG from standard
+                        $severityCount["critical"]++;
+                        $majorPlusDeviations++;
+                        $majorPlusSections++;
+                        $criticalDeviations++;
+                        $criticalSections++;
+                    } elseif ($deviation > 5) {
+                        // Major: >5 KG from standard
+                        $severityCount["major"]++;
+                        $majorPlusDeviations++;
+                        $majorPlusSections++;
+                    } else {
+                        // Minor: <5 KG from standard
+                        $severityCount["minor"]++;
+                    }
+                }
+            }
+        }
+
+        // Calculate rates
+        $criticalRate = $totalSections > 0 
+            ? round(($criticalSections / $totalSections) * 100, 2) 
+            : 0;
+
+        $this->deviationSummary = [
+            "total_measurements" => $totalMeasurements,
+            "total_sections" => $totalSections,
+            "total_deviations" => $totalDeviations,
+            "deviation_sections" => $deviationSections,
+            "major_plus_deviations" => $majorPlusDeviations,
+            "major_plus_sections" => $majorPlusSections,
+            "critical_deviations" => $criticalDeviations,
+            "critical_sections" => $criticalSections,
+            "critical_rate" => $criticalRate,
+        ];
+
+        $this->severityBreakdown = $severityCount;
     }
 
     #[On("updated")]
     public function with(): array
     {
         $counts = $this->getCountsQuery()->paginate($this->perPage);
-        $this->generateCharts(); // Add this line to regenerate charts when filters change
+        $this->generateCharts();
+        $this->calculateDeviations();
+        $this->renderCharts();
         return [
             "counts" => $counts,
         ];
@@ -186,12 +284,12 @@ new #[Layout("layouts.app")] class extends Component {
     public function update()
     {
         $this->generateCharts();
+        $this->calculateDeviations();
+        $this->renderCharts();
     }
 
-    // Generate Charts
     private function generateCharts()
     {
-        // Get all the relevant data points based on the filters (date, line, machine)
         $dataRaw = InsDwpCount::select(
             "ins_dwp_counts.*",
             "ins_dwp_counts.created_at as count_created_at"
@@ -206,27 +304,23 @@ new #[Layout("layouts.app")] class extends Component {
         }
 
         if (!empty($this->machine)) {
-            $dataRaw->where('ins_dwp_counts.mechine', $this->machine); // Make sure 'mechine' matches your actual DB column name
+            $dataRaw->where('ins_dwp_counts.mechine', $this->machine);
         }
 
-        $presureData = $dataRaw->whereNotNull('pv')->get()->toArray();
-        $counts = collect($presureData);
+        $pressureData = $dataRaw->whereNotNull('pv')->get()->toArray();
+        $counts = collect($pressureData);
         
-        // Prepare arrays to hold median values for each of the 4 sensors
         $toeheel_left_data = [];
         $toeheel_right_data = [];
         $side_left_data = [];
         $side_right_data = [];
 
-        // Loop through each database record
         foreach ($counts as $count) {
             $arrayPv = json_decode($count['pv'], true);
-            // Check if pv data is valid
             if (isset($arrayPv[0]) && isset($arrayPv[1])) {
                 $toeHeelArray = $arrayPv[0];
                 $sideArray = $arrayPv[1];
                 
-                // Calculate median for each sensor array
                 $toeHeelMedian = $this->getMedian($toeHeelArray);
                 $sideMedian = $this->getMedian($sideArray);
                 
@@ -259,18 +353,64 @@ new #[Layout("layouts.app")] class extends Component {
             ],
         ];
 
-        // Filter out any datasets that returned null (no data)
         $filteredDatasets = array_filter($datasets, fn($d) => $d['y'] !== null);
 
         $performanceData = [
             'labels' => ['Toe-Heel Left', 'Toe-Heel Right', 'Side Left', 'Side Right'],
-            'datasets' => array_values($filteredDatasets), // Pass only the valid data
+            'datasets' => array_values($filteredDatasets),
         ];
 
-        // Dispatch the event to the frontend to update the chart
         $this->dispatch('refresh-performance-chart', [
             'performanceData' => $performanceData,
         ]);
+    }
+
+    private function renderCharts()
+    {
+        // Severity breakdown pie chart with updated labels
+        $severityChartData = [
+            "labels" => [__("Minor (<5 KG)"), __("Major (>5 KG)"), __("Critical (>10 KG)")],
+            "datasets" => [
+                [
+                    "data" => array_values($this->severityBreakdown),
+                    "backgroundColor" => ["rgba(255, 205, 86, 0.8)", "rgba(255, 159, 64, 0.8)", "rgba(255, 99, 132, 0.8)"],
+                ],
+            ],
+        ];
+
+        $this->js(
+            "
+            (function() {
+                  var severityCtx = document.getElementById('severity-chart');
+                  if (window.severityChart) window.severityChart.destroy();
+                  window.severityChart = new Chart(severityCtx, {
+                     type: 'doughnut',
+                     data: " .
+                json_encode($severityChartData) .
+                ",
+                     options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: '" .
+                __("Klasifikasi Deviasi") .
+                "',
+                                font: {
+                                    size: 16,
+                                    weight: 'bold'
+                                }
+                            },
+                            legend: {
+                                position: 'left'
+                            }
+                        }
+                     }
+                  });
+            })()
+         "
+        );
     }
 }; ?>
 
@@ -328,6 +468,7 @@ new #[Layout("layouts.app")] class extends Component {
             <div>
                 <label class="block px-3 mb-2 uppercase text-xs text-neutral-500">{{ __("Machine") }}</label>
                 <x-select wire:model.live="machine" wire:change="dispatch('updated')" class="w-full lg:w-32">
+                    <option value="">All</option>
                     <option value="1">1</option>
                     <option value="2">2</option>
                     <option value="3">3</option>
@@ -337,26 +478,27 @@ new #[Layout("layouts.app")] class extends Component {
         </div>
     </div>
   </div>
-  <div class="overflow-hidden">
-    <div class="grid grid-cols-1 gap-2 md:grid-cols-1 md:gap-2">
-        <!-- chart section type boxplot -->
-        <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-4">
+
+  <div class="overflow-hidden mb-6">
+    <div class="grid grid-cols-1 gap-6">
+        <!-- Boxplot Chart -->
+        <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
+            <h3 class="text-lg font-semibold mb-4 text-neutral-900 dark:text-neutral-100">
+                DWP {{ $machine ? 'Machine ' . $machine : 'All' }} Performance Boxplot
+            </h3>
             <div
                 x-data="{
                     performanceChart: null,
 
-                    // This function will now handle all chart creation/updates
                     initOrUpdateChart(performanceData) {
-                        const chartEl = this.$refs.chartContainer; // Get element using x-ref
+                        const chartEl = this.$refs.chartContainer;
                         if (!chartEl) {
-                            console.error('[ApexChart] Chart container x-ref=\'chartContainer\' not found.');
+                            console.error('[ApexChart] Chart container not found.');
                             return;
                         }
 
                         const datasets = performanceData.datasets || [];
 
-                        // --- FIX 1: Corrected Data Transformation ---
-                        // ApexCharts boxplot expects: { x: 'label', y: [min, q1, median, q3, max] }
                         const transformedData = datasets
                             .filter(dataset => {
                                 return dataset &&
@@ -368,52 +510,52 @@ new #[Layout("layouts.app")] class extends Component {
                             })
                             .map(dataset => {
                                 return {
-                                    x: dataset.x, // The category name (e.g., 'Toe-Heel Left')
-                                    y: dataset.y  // The 5-point array [min, q1, median, q3, max]
+                                    x: dataset.x,
+                                    y: dataset.y
                                 };
                             });
 
                         const hasValidData = transformedData.length > 0;
-                        console.log('[ApexChart] Valid transformed data:', transformedData);
 
-                        // --- FIX 2: Robust Update Logic ---
-                        // Always destroy the old chart instance before creating a new one.
                         if (this.performanceChart) {
-                            console.log('[ApexChart] Destroying old chart before update.');
                             this.performanceChart.destroy();
                         }
 
                         const options = {
-                            // --- FIX 3: Corrected Series Definition ---
                             series: [{
                                 name: 'Performance',
                                 data: transformedData
                             }],
                             chart: {
                                 type: 'boxPlot',
-                                height: 350,
+                                height: 400,
                                 toolbar: { show: true },
                                 animations: {
                                     enabled: true,
-                                    speed: 350 // Faster animation for updates
+                                    speed: 350
                                 }
                             },
-                            title: {
-                                text: 'DWP Machine Performance Boxplot'
+                            colors: ['#3b82f6'],
+                            plotOptions: {
+                                boxPlot: {
+                                    colors: {
+                                        upper: '#22c55e',
+                                        lower: '#3b82f6'
+                                    }
+                                }
                             },
                             xaxis: {
-                                // --- FIX 4: Removed Redundant Categories ---
                                 type: 'category',
                             },
                             yaxis: {
-                                title: { text: 'Pressure' },
+                                title: { text: 'Pressure (kg)' },
                                 labels: {
                                     formatter: (val) => { return val.toFixed(2) }
                                 }
                             },
                             tooltip: {
                                 y: {
-                                    formatter: (val) => { return val.toFixed(2) }
+                                    formatter: (val) => { return val.toFixed(2) + ' kg' }
                                 }
                             },
                             noData: hasValidData ? undefined : {
@@ -423,13 +565,11 @@ new #[Layout("layouts.app")] class extends Component {
                             }
                         };
 
-                        console.log('[ApexChart] Creating new chart instance.');
                         this.performanceChart = new ApexCharts(chartEl, options);
                         this.performanceChart.render();
                     }
                 }"
                 x-init="
-                    // Listen for the Livewire event
                     $wire.on('refresh-performance-chart', function(payload) {
                         let data = payload;
                         if (payload && payload.detail) data = payload.detail;
@@ -438,21 +578,17 @@ new #[Layout("layouts.app")] class extends Component {
 
                         const performanceData = data?.performanceData;
                         if (!performanceData) {
-                            console.warn('[DWP Dashboard] refresh-performance-chart payload missing expected properties', data);
+                            console.warn('[DWP Dashboard] refresh-performance-chart payload missing');
                             return;
                         }
-                        console.log('Received refresh-performance-chart event with ', performanceData);
 
                         try {
-                            // Call our Alpine method
                             initOrUpdateChart(performanceData);
                         } catch (e) {
-                            console.error('[DWP Dashboard] error while initializing/updating ApexChart', e, performanceData);
+                            console.error('[DWP Dashboard] error:', e);
                         }
                     });
 
-                    // Initial load - dispatch the updated event to fetch data and render chart
-                    console.log('[Alpine] Triggering initial data load.');
                     $wire.$dispatch('updated');
                 " >
                 <div id="performanceChart" x-ref="chartContainer" wire:ignore></div>
@@ -460,4 +596,48 @@ new #[Layout("layouts.app")] class extends Component {
         </div>
     </div>
   </div>
+
+  <!-- Main Content Grid: Chart + KPI Cards -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- Pie Chart -->
+    <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
+        <div class="h-full">
+            <canvas id="severity-chart"></canvas>
+        </div>
+    </div>
+
+    <!-- KPI Cards Grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
+            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Total Pengukuran") }}</div>
+            <div class="text-2xl font-bold">{{ number_format($deviationSummary["total_measurements"] ?? 0) }}</div>
+            <div class="text-xs text-neutral-500 mt-1">{{ number_format($deviationSummary["total_sections"] ?? 0)}}</div>
+        </div>
+        <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
+            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Total Quantity Deviasi") }}</div>
+            <div class="text-2xl font-bold text-red-500">{{ number_format($deviationSummary["total_deviations"] ?? 0) }}</div>
+            <div class="text-xs text-neutral-500 mt-1">{{ number_format($deviationSummary["deviation_sections"] ?? 0) . " " . __("EA") }}</div>
+        </div>
+        <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
+            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Deviasi Major") }}</div>
+            <div class="text-2xl font-bold text-orange-600">{{ number_format($deviationSummary["major_plus_deviations"] ?? 0) }}</div>
+            <div class="text-xs text-neutral-500 mt-1">{{ number_format($deviationSummary["major_plus_sections"] ?? 0) . " " . __("sections") }}</div>
+        </div>
+        <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
+            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Deviasi Critical") }}</div>
+            <div
+                class="text-2xl font-bold {{ ($deviationSummary["critical_rate"] ?? 0) > 10 ? "text-red-500" : (($deviationSummary["critical_rate"] ?? 0) > 5 ? "text-yellow-500" : "text-green-500") }}"
+            >
+                {{ number_format($deviationSummary["critical_rate"] ?? 0, 2) }}%
+            </div>
+            <div class="text-xs text-neutral-500 mt-1">{{ __("Target: <10%") }}</div>
+        </div>
+    </div>
+  </div>
 </div>
+
+@script
+    <script>
+        $wire.$dispatch('updated');
+    </script>
+@endscript

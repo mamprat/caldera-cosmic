@@ -47,6 +47,7 @@ new class extends Component {
     ];
 
     public $metric = null;
+    private const CORRECTION_THRESHOLD = 0.07;
     
     public function getCanDownloadBatchCsvProperty(): bool
     {
@@ -191,11 +192,25 @@ new class extends Component {
         if (!$data || !is_array($data)) return 0;
         $leftCount = 0;
         $rightCount = 0;
-        foreach ($data as $point) {
+        foreach ($data as $index => $point) {
             $actionLeft = $point[2] ?? 0;
             $actionRight = $point[3] ?? 0;
-            if ($actionLeft == 1 || $actionLeft == 2) $leftCount++;
-            if ($actionRight == 1 || $actionRight == 2) $rightCount++;
+            if ($actionLeft == 1 || $actionLeft == 2) {
+                $effectiveChange = $this->calculateEffectiveChange($data, $index, 'left');
+                if ($effectiveChange !== null && isset($effectiveChange['abs_change'])) {
+                    if ($effectiveChange['abs_change'] >= self::CORRECTION_THRESHOLD) {
+                        $leftCount++;
+                    }
+                }
+            }
+            if ($actionRight == 1 || $actionRight == 2) {
+                $effectiveChange = $this->calculateEffectiveChange($data, $index, 'right');
+                if ($effectiveChange !== null && isset($effectiveChange['abs_change'])) {
+                    if ($effectiveChange['abs_change'] >= self::CORRECTION_THRESHOLD) {
+                        $rightCount++;
+                    }
+                }
+            }
         }
         switch ($type) {
             case "left": return $leftCount;
@@ -211,13 +226,27 @@ new class extends Component {
             return ['thick_left' => 0, 'thick_right' => 0, 'thin_left' => 0, 'thin_right' => 0];
         }
         $thickLeft = 0; $thickRight = 0; $thinLeft = 0; $thinRight = 0;
-        foreach ($data as $point) {
+        foreach ($data as $index => $point) {
             $actionLeft = isset($point[2]) ? (int)$point[2] : 0;
             $actionRight = isset($point[3]) ? (int)$point[3] : 0;
-            if ($actionLeft === 2) $thickLeft++;
-            elseif ($actionLeft === 1) $thinLeft++;
-            if ($actionRight === 2) $thickRight++;
-            elseif ($actionRight === 1) $thinRight++;
+            if ($actionLeft !== 0) {
+                $effectiveChange = $this->calculateEffectiveChange($data, $index, 'left');
+                if ($effectiveChange !== null && isset($effectiveChange['abs_change'])) {
+                    if ($effectiveChange['abs_change'] >= self::CORRECTION_THRESHOLD) {
+                        if ($actionLeft === 2) $thickLeft++;
+                        elseif ($actionLeft === 1) $thinLeft++;
+                    }
+                }
+            }
+            if ($actionRight !== 0) {
+                $effectiveChange = $this->calculateEffectiveChange($data, $index, 'right');
+                if ($effectiveChange !== null && isset($effectiveChange['abs_change'])) {
+                    if ($effectiveChange['abs_change'] >= self::CORRECTION_THRESHOLD) {
+                        if ($actionRight === 2) $thickRight++;
+                        elseif ($actionRight === 1) $thinRight++;
+                    }
+                }
+            }
         }
         return ['thick_left' => $thickLeft, 'thick_right' => $thickRight, 'thin_left' => $thinLeft, 'thin_right' => $thinRight];
     }
@@ -361,9 +390,12 @@ new class extends Component {
                     $effectiveChange = $this->calculateEffectiveChange($data, $index, 'left');
                     if ($effectiveChange !== null) {
                         $changeValue = is_array($effectiveChange) ? ($effectiveChange['change'] ?? 0) : $effectiveChange;
+                        $absChange = is_array($effectiveChange) ? ($effectiveChange['abs_change'] ?? abs($changeValue)) : abs($changeValue);
                         
-                        $changeLeft = $changeValue;
-                        $percentLeft = $sensorLeft > 0 ? (abs($changeValue) / $sensorLeft) * 100 : 0;
+                        if ($absChange >= self::CORRECTION_THRESHOLD) {
+                            $changeLeft = $changeValue;
+                            $percentLeft = $sensorLeft > 0 ? ($absChange / $sensorLeft) * 100 : 0;
+                        }
                     }
                 }
                 $changeRight = 0; $percentRight = 0;
@@ -371,9 +403,12 @@ new class extends Component {
                     $effectiveChange = $this->calculateEffectiveChange($data, $index, 'right');
                     if ($effectiveChange !== null) {
                         $changeValue = is_array($effectiveChange) ? ($effectiveChange['change'] ?? 0) : $effectiveChange;
+                        $absChange = is_array($effectiveChange) ? ($effectiveChange['abs_change'] ?? abs($changeValue)) : abs($changeValue);
                         
-                        $changeRight = $changeValue;
-                        $percentRight = $sensorRight > 0 ? (abs($changeValue) / $sensorRight) * 100 : 0;
+                        if ($absChange >= self::CORRECTION_THRESHOLD) {
+                            $changeRight = $changeValue;
+                            $percentRight = $sensorRight > 0 ? ($absChange / $sensorRight) * 100 : 0;
+                        }
                     }
                 }
                 fputcsv($file, [$index + 1, $timestamp, $waktu, number_format($sensorLeft, 2, '.', ''), number_format($sensorRight, 2, '.', ''), $actionLeft, $actionRight, $triggerLeftLabel, $triggerRightLabel, number_format($changeLeft, 2, '.', ''), number_format($changeRight, 2, '.', ''), number_format($percentLeft, 1, '.', ''), number_format($percentRight, 1, '.', ''), number_format($stdMin, 2, '.', ''), number_format($stdMax, 2, '.', ''), number_format($stdMid, 2, '.', ''), $isCorrecting, $batchInfo['rubber_batch_code'], $batchInfo['machine_line'], $batchInfo['mcs'], $recipeId, $recipeFullName, $batchInfo['shift']]);
@@ -407,6 +442,7 @@ new class extends Component {
             const chartData = " . json_encode($chartData) . ";
             const chartOptions = " . json_encode($chartOptions) . ";
             const rawData = " . $rawDataJson . ";
+            const CORRECTION_THRESHOLD = " . self::CORRECTION_THRESHOLD . ";
 
             // Fungsi untuk mencari data point berdasarkan timestamp
             function findDataPointIndex(timestamp) {
@@ -445,9 +481,12 @@ new class extends Component {
                 
                 if (futureValue === null) return null;
                 
-                // Hitung perubahan absolut
+                // Hitung perubahan dengan arah
                 const change = futureValue - currentValue;
-                return change;
+                return {
+                    change: change,
+                    abs_change: Math.abs(change)
+                };
             }
 
             // Configure time formatting
@@ -487,38 +526,31 @@ new class extends Component {
                             const side = point.side;
                             const dataIndex = findDataPointIndex(point.x);
                             
-                            const emoji = point.action === 1 ? '▼' : '▲';
-                            const actionType = point.action === 1 ? 'Menipiskan' : 'Menebalkan';
-                            
-                            lines.push('');
-                            lines.push(emoji + actionType);
-                            
                             // Hitung perubahan efektif
                             if (dataIndex >= 0) {
                                 const effectiveChange = calculateEffectiveChange(dataIndex, side);
-                                if (effectiveChange !== null) {
-                                    const absChange = Math.abs(effectiveChange);
-                                    let dirText = '';
+                                if (effectiveChange !== null && effectiveChange.abs_change >= CORRECTION_THRESHOLD) {
+                                    const emoji = point.action === 1 ? '▼' : '▲';
+                                    const actionType = point.action === 1 ? 'Menipiskan' : 'Menebalkan';
                                     
-                                    if (effectiveChange > 0) {
-                                        // dirText = 'NAIK';
-                                        isConsistent = (point.action === 2); // Harusnya menebalkan
-                                    } else if (effectiveChange < 0) {
-                                        // dirText = 'TURUN';
-                                        isConsistent = (point.action === 1); // Harusnya menipiskan
-                                    } else {
-                                        // dirText = 'STABIL';
-                                        isConsistent = true;
+                                    lines.push('');
+                                    lines.push(emoji + ' ' + actionType);
+                                    
+                                    const absChange = effectiveChange.abs_change;
+                                    let isConsistent = true;
+                                    
+                                    if (effectiveChange.change > 0) {
+                                        isConsistent = (point.action === 2);
+                                    } else if (effectiveChange.change < 0) {
+                                        isConsistent = (point.action === 1);
                                     }
 
-                                    // Tambahkan label inkonsisten jika perlu
                                     if (!isConsistent) {
                                         lines.push('⚠️ INKONSISTEN');
                                     }
                                     
-                                    lines.push('📊 ' + absChange.toFixed(2) + ' mm ');
+                                    lines.push('📊 ' + absChange.toFixed(2) + ' mm');
                                     
-                                    // Persentase perubahan
                                     const percentChange = ((absChange / context.parsed.y) * 100).toFixed(1);
                                     lines.push('📈 ' + percentChange + '%');
                                 }
@@ -542,8 +574,15 @@ new class extends Component {
             chartOptions.plugins.datalabels = {
                 display: function(context) {
                     const point = context.dataset.data[context.dataIndex];
-                    // Tampilkan SEMUA trigger (baik kritis maupun preventif)
-                    return point && point.action && (point.action === 1 || point.action === 2);
+                    if (!point || !point.action || (point.action !== 1 && point.action !== 2)) {
+                        return false;
+                    }
+                    
+                    const dataIndex = findDataPointIndex(point.x);
+                    if (dataIndex < 0) return false;
+                    
+                    const effectiveChange = calculateEffectiveChange(dataIndex, point.side);
+                    return effectiveChange !== null && effectiveChange.abs_change >= CORRECTION_THRESHOLD;
                 },
                 
                 formatter: function(value, context) {
