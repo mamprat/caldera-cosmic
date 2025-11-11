@@ -1,0 +1,180 @@
+{
+  "description": "Clean DWP Cycle Data Structure - Only Essential Manufacturing Data",
+  "database_fields": {
+    "mechine": "Machine number (1-4)",
+    "line": "Production line (LINEA, LINEB, etc)",
+    "count": "Cumulative cycle count for the line",
+    "position": "Press position (L or R)",
+    "duration": "Actual press cycle time in seconds (15-20s, typically 16s)",
+    "incremental": "Always 1 (every cycle counts)",
+    "created_at": "Timestamp when cycle occurred",
+    "std_error": "Boolean quality array [[th_quality],[side_quality]]",
+    "pv": "Enhanced cycle data with waveforms and quality metrics"
+  },
+
+  "std_error_format": {
+    "description": "Boolean array format for sensor quality",
+    "structure": "[[toe_heel_quality],[side_quality]]",
+    "values": {
+      "1": "Good quality (peak value 30-45)",
+      "0": "Bad quality (peak value outside 30-45)"
+    },
+    "examples": {
+      "both_good": "[[1],[1]]",
+      "both_bad": "[[0],[0]]",
+      "th_good_side_bad": "[[1],[0]]",
+      "th_bad_side_good": "[[0],[1]]"
+    }
+  },
+
+  "pv_field_structure": {
+    "description": "Enhanced process value data with waveforms and quality metadata",
+    "structure": {
+      "waveforms": {
+        "description": "Normalized 30-point pressure waveforms",
+        "format": "[[th_waveform_30_points], [side_waveform_30_points]]",
+        "example": "[[0,5,15,28,35,42,42,40,38,35,30,25,20,15,10,5,0,...], [0,4,12,25,32,38,40,38,35,32,28,22,18,12,8,4,0,...]]"
+      },
+      "quality": {
+        "grade": "Quality classification (EXCELLENT, GOOD, MARGINAL, DEFECTIVE, SENSOR_ISSUES, SHORT_CYCLE, OVERFLOW)",
+        "peaks": {
+          "th": "Toe/heel sensor peak pressure value",
+          "side": "Side sensor peak pressure value"
+        },
+        "cycle_type": "Cycle completion type (COMPLETE, SHORT_CYCLE, OVERFLOW, TIMEOUT)",
+        "sample_count": "Number of samples in waveform (always 30 after normalization)",
+        "actual_cycle_time": "Actual press duration in seconds (15-20)"
+      }
+    }
+  },
+
+  "example_complete_record": {
+    "mechine": 1,
+    "line": "LINEA",
+    "count": 12345,
+    "position": "L",
+    "duration": 16,
+    "incremental": 1,
+    "std_error": "[[1],[1]]",
+    "pv": {
+      "waveforms": [
+        [0, 3, 9, 18, 28, 36, 40, 42, 42, 41, 40, 39, 38, 37, 36, 35, 32, 28, 24, 19, 14, 10, 7, 4, 2, 1, 0, 0, 0, 0],
+        [0, 2, 8, 16, 26, 34, 38, 40, 40, 39, 38, 37, 36, 35, 34, 33, 30, 26, 22, 17, 12, 8, 5, 3, 1, 0, 0, 0, 0, 0]
+      ],
+      "quality": {
+        "grade": "EXCELLENT",
+        "peaks": {
+          "th": 42,
+          "side": 40
+        },
+        "cycle_type": "COMPLETE",
+        "sample_count": 30,
+        "actual_cycle_time": 16
+      }
+    },
+    "created_at": "2024-01-15 10:30:45"
+  },
+
+  "quality_grades_explained": {
+    "EXCELLENT": {
+      "description": "Both sensors within optimal range (32-42)",
+      "th_range": "32-42",
+      "side_range": "32-42",
+      "std_error": "[[1],[1]]",
+      "typical_percentage": "60-65%"
+    },
+    "GOOD": {
+      "description": "Both sensors within acceptable range (30-45)",
+      "th_range": "30-45",
+      "side_range": "30-45",
+      "std_error": "[[1],[1]]",
+      "typical_percentage": "20-25%"
+    },
+    "MARGINAL": {
+      "description": "One sensor good, one slightly outside range",
+      "examples": ["TH: 30-45, Side: 20-29", "TH: 46-55, Side: 30-45"],
+      "std_error": "[[1],[0]] or [[0],[1]]",
+      "typical_percentage": "7-10%"
+    },
+    "DEFECTIVE": {
+      "description": "Poor quality cycle, values significantly outside range",
+      "std_error": "[[0],[0]]",
+      "typical_percentage": "2-3%"
+    },
+    "SENSOR_ISSUES": {
+      "description": "Sensor malfunction detected (very low or very high readings)",
+      "indicators": ["Both sensors < 10", "Either sensor > 80"],
+      "std_error": "[[0],[0]]",
+      "typical_percentage": "1-2%"
+    },
+    "SHORT_CYCLE": {
+      "description": "Cycle ended prematurely (< 3 samples)",
+      "action": "Still saved for analysis",
+      "std_error": "[[0],[0]]"
+    },
+    "OVERFLOW": {
+      "description": "Buffer overflow (> 100 samples before completion)",
+      "action": "Still saved for analysis",
+      "std_error": "[[0],[0]]"
+    }
+  },
+
+  "press_timing_characteristics": {
+    "cycle_time": {
+      "standard": "16 seconds",
+      "range": "15-20 seconds",
+      "variation": "±1 to +4 seconds from base"
+    },
+    "position_gap": {
+      "description": "Time between L and R position starts",
+      "range": "2-8 seconds",
+      "note": "Not standardized - varies naturally"
+    },
+    "machines": {
+      "count": 4,
+      "operation": "Running simultaneously",
+      "independence": "Each machine operates independently"
+    },
+    "waveform_phases": {
+      "ramp_up": "30% of cycle - pressure increases (quadratic)",
+      "peak": "40% of cycle - maintained at peak pressure",
+      "release": "30% of cycle - pressure decreases (quadratic)"
+    }
+  },
+
+  "data_usage_examples": {
+    "query_both_sensors_good": {
+      "sql": "SELECT * FROM ins_dwp_counts WHERE JSON_EXTRACT(std_error, '$[0][0]') = 1 AND JSON_EXTRACT(std_error, '$[1][0]') = 1",
+      "eloquent": "InsDwpCount::whereRaw(\"JSON_EXTRACT(std_error, '$[0][0]') = 1\")->whereRaw(\"JSON_EXTRACT(std_error, '$[1][0]') = 1\")->get()"
+    },
+    "query_quality_issues": {
+      "sql": "SELECT * FROM ins_dwp_counts WHERE JSON_EXTRACT(std_error, '$[0][0]') = 0 OR JSON_EXTRACT(std_error, '$[1][0]') = 0",
+      "eloquent": "InsDwpCount::whereRaw(\"JSON_EXTRACT(std_error, '$[0][0]') = 0\")->orWhereRaw(\"JSON_EXTRACT(std_error, '$[1][0]') = 0\")->get()"
+    },
+    "calculate_quality_rate": {
+      "sql": "SELECT line, COUNT(*) as total, SUM(JSON_EXTRACT(std_error, '$[0][0]') * JSON_EXTRACT(std_error, '$[1][0]')) as good, ROUND(SUM(JSON_EXTRACT(std_error, '$[0][0]') * JSON_EXTRACT(std_error, '$[1][0]')) / COUNT(*) * 100, 2) as quality_rate FROM ins_dwp_counts GROUP BY line"
+    },
+    "access_waveform_data": {
+      "php": "$pvData = json_decode($cycle->pv, true); $thWaveform = $pvData['waveforms'][0]; $sideWaveform = $pvData['waveforms'][1];"
+    },
+    "get_quality_grade": {
+      "php": "$pvData = json_decode($cycle->pv, true); $grade = $pvData['quality']['grade']; $peaks = $pvData['quality']['peaks'];"
+    }
+  },
+
+  "no_unnecessary_data": {
+    "removed": [
+      "modbus_address - Only needed for communication, not storage",
+      "machine_specific_config - Stored in InsDwpDevice model",
+      "network_settings - Part of device configuration"
+    ],
+    "philosophy": "Store only what's needed for production analysis, quality tracking, and historical trends"
+  },
+
+  "simulation_commands": {
+    "generate_data": "php artisan app:simulate-dwp-data --count=200 --line=LINEA --days=1",
+    "run_comprehensive": "php examples/run_dwp_simulation.php",
+    "realtime_monitor": "php examples/realtime_press_monitor.php",
+    "actual_polling": "php artisan app:ins-dwp-poll --v --d"
+  }
+}

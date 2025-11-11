@@ -49,14 +49,14 @@ new class extends Component {
         if (empty($array)) {
             return 0;
         }
-        
+
         // Filter out non-numeric values
         $numericArray = array_filter($array, 'is_numeric');
-        
+
         if (empty($numericArray)) {
             return 0;
         }
-        
+
         // Get max value from the numeric array
         return max($numericArray);
     }
@@ -68,7 +68,7 @@ new class extends Component {
         $totalSeconds = 17;
         $labels = range(0, $totalSeconds); // Sumbu X: 0, 1, 2, ... 17
 
-        $pvArray = json_decode($this->detail['pv'] ?? '[]', true);
+        $pvArray = json_decode($this->detail['pv'] ?? '[]', true)['waveforms'];
         if (!is_array($pvArray)) {
             $pvArray = []; // Pastikan $pvArray adalah array
         }
@@ -113,7 +113,7 @@ new class extends Component {
             'side' => $sideValues,
             'isTimeAxis' => $isTimeAxis, // Kirim flag ke JS (selalu false)
         ];
-        
+
         // dd($chartData); // Dihapus
         $chartDataJson = json_encode($chartData);
 
@@ -192,7 +192,7 @@ new class extends Component {
                                     // --- KONFIGURASI SUMBU X TIPE WAKTU (tidak akan pernah terpakai) ---
                                     type: 'time',
                                     time: {
-                                        unit: 'hour', 
+                                        unit: 'hour',
                                         tooltipFormat: 'MMM d, HH:mm:ss',
                                         displayFormats: {
                                             hour: 'HH:mm',
@@ -204,15 +204,15 @@ new class extends Component {
                                         text: 'Time',
                                         color: theme.textColor
                                     },
-                                    grid: { 
+                                    grid: {
                                         color: theme.gridColor,
-                                        drawOnChartArea: true, 
+                                        drawOnChartArea: true,
                                         drawTicks: false
                                     },
-                                    ticks: { 
-                                        color: theme.textColor, 
-                                        autoSkip: true, 
-                                        maxTicksLimit: 12 
+                                    ticks: {
+                                        color: theme.textColor,
+                                        autoSkip: true,
+                                        maxTicksLimit: 12
                                     }
                                 } : {
                                     // --- KONFIGURASI SUMBU X TIPE LINEAR (default) ---
@@ -240,15 +240,15 @@ new class extends Component {
                                         text: 'Pressure (kg)',
                                         color: theme.textColor
                                     },
-                                    grid: { 
+                                    grid: {
                                         color: theme.gridColor,
                                         drawOnChartArea: true,
                                         drawTicks: false
                                     },
-                                    ticks: { 
+                                    ticks: {
                                         color: theme.textColor,
                                         callback: function(value, index, ticks) {
-                                            return value + ''; 
+                                            return value + '';
                                         }
                                     }
                                 }
@@ -257,7 +257,7 @@ new class extends Component {
                                 legend: {
                                     display: true,
                                     position: 'right',
-                                    labels: { 
+                                    labels: {
                                         color: theme.textColor,
                                         usePointStyle: true
                                     }

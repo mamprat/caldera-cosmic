@@ -21,7 +21,7 @@ class InsDwpPollAlarm extends Command
     protected $pollIntervalSeconds = 1;
     protected $modbusTimeoutSeconds = 2;
     protected $modbusPort = 503;
-    
+
     /**
      * The name and signature of the console command.
      *
@@ -40,11 +40,11 @@ class InsDwpPollAlarm extends Command
     protected $lastCumulativeValues = [];
     private $lastDurationValues = [];
     public int $saveDuration = 0;
-    
+
     // Memory optimization counters
     protected $pollCycleCount = 0;
     protected $memoryCleanupInterval = 1000; // Clean memory every 1000 cycles
-    
+
     // Statistics tracking
     protected $deviceStats = [];
     protected $totalReadings = 0;
@@ -77,7 +77,7 @@ class InsDwpPollAlarm extends Command
             $cycleStartTime = microtime(true);
             $cycleReadings = 0;
             $cycleErrors = 0;
-            
+
             foreach ($devices as $device) {
                 if ($this->option('v')) {
                     $this->comment("→ Polling {$device->name} ({$device->ip_address})");
@@ -95,24 +95,24 @@ class InsDwpPollAlarm extends Command
                     $this->updateDeviceStats($device->name, false);
                 }
             }
-            
+
             // Update global statistics
             $this->totalReadings += $cycleReadings;
             $this->totalErrors += $cycleErrors;
-            
+
             // Display cycle statistics
             if ($this->option('v')) {
                 $cycleTime = microtime(true) - $cycleStartTime;
-                $this->info("Cycle #{$this->pollCycleCount}: {$cycleReadings} readings, {$cycleErrors} errors, " . 
+                $this->info("Cycle #{$this->pollCycleCount}: {$cycleReadings} readings, {$cycleErrors} errors, " .
                            number_format($cycleTime * 1000, 2) . "ms");
             }
 
             // Sleep for configured interval before next poll
             sleep($this->pollIntervalSeconds);
-            
+
             // Increment cycle count for memory management
             $this->pollCycleCount++;
-            
+
             // Periodic memory cleanup
             if ($this->pollCycleCount % $this->memoryCleanupInterval === 0) {
                 $this->cleanupMemory();
@@ -161,9 +161,9 @@ class InsDwpPollAlarm extends Command
                 ->setHost($device->ip_address)
                 ->setPort($this->modbusPort)
                 ->build();
-                
+
                 $packet = new WriteSingleRegisterRequest(
-                    509,    // Register address
+                    609,    // Register address
                     $longDurationData['duration'],   // Value
                     1       // Unit ID
                 );
@@ -196,7 +196,7 @@ class InsDwpPollAlarm extends Command
                 $datas = [];
                 // REQUEST DATA COUNTER AND RESPONSE COUNTER
                 $requestCounter = ReadRegistersBuilder::newReadInputRegisters(
-                        'tcp://' . $device->ip_address . ':' . $this->modbusPort, 
+                        'tcp://' . $device->ip_address . ':' . $this->modbusPort,
                         $unit_id)
                         ->int16($lineConfig['dwp_alarm']['addr_counter'], 'counter_value')
                         ->build();
@@ -204,18 +204,18 @@ class InsDwpPollAlarm extends Command
                 $responseCounter = (new NonBlockingClient(['readTimeoutSec' => $this->modbusTimeoutSeconds]))
                 ->sendRequests($requestCounter)->getData();
                 $currentCumulative = abs($responseCounter['counter_value']); // Make absolute to ensure positive values
-                
+
                 $requestLongDuration = ReadRegistersBuilder::newReadInputRegisters(
-                        'tcp://' . $device->ip_address . ':' . $this->modbusPort, 
+                        'tcp://' . $device->ip_address . ':' . $this->modbusPort,
                         $unit_id)
                         ->int16('554', 'duration')
                         ->build();
                         // Execute Modbus request
                 $responseLongDuration = (new NonBlockingClient(['readTimeoutSec' => $this->modbusTimeoutSeconds]))
                 ->sendRequests($requestLongDuration)->getData();
-                
+
                 $currentDuration = $responseLongDuration['duration'];
-                
+
                 if ($this->option('d')) {
                     $this->line("    Current cumulative: {$currentCumulative}");
                     $this->line("    Current duration: {$currentDuration}");
@@ -256,7 +256,7 @@ class InsDwpPollAlarm extends Command
                     if (!empty($lastRecord) && isset($this->lastDurationValues[$line])) {
                         InsDwpTimeAlarmCount::where('id', $lastRecord['id'])
                             ->update(['duration' => $this->lastDurationValues[$line]]);
-                        
+
                         if ($this->option('d')) {
                             $this->line("    Updated final duration for previous record ID {$lastRecord['id']}: {$this->lastDurationValues[$line]}");
                         }
@@ -275,14 +275,14 @@ class InsDwpPollAlarm extends Command
                     if ($this->option('v')) {
                         $this->info("  ✓ Stored: Line {$line}, Cumulative: {$currentCumulative}, Incremental: +{$incremental}, Duration: {$currentDuration}");
                     }
-                    
+
                     $readingsCount++;
                 } else {
                     // No new increment, just update the duration of the existing record
                     if (!empty($lastRecord)) {
                         InsDwpTimeAlarmCount::where('id', $lastRecord['id'])
                             ->update(['duration' => $currentDuration]);
-                        
+
                         if ($this->option('d')) {
                             $this->line("    Updated duration for current record ID {$lastRecord['id']}: {$currentDuration}");
                         }
@@ -298,7 +298,7 @@ class InsDwpPollAlarm extends Command
                 continue;
             }
         }
-        
+
         return $readingsCount;
     }
 
@@ -311,18 +311,18 @@ class InsDwpPollAlarm extends Command
         $activeLines = InsDwpDevice::active()->get()->flatMap(function ($device) {
             return $device->getLines();
         })->unique()->toArray();
-        
+
         // Remove entries for lines that are no longer active
         $this->lastCumulativeValues = array_intersect_key(
-            $this->lastCumulativeValues, 
+            $this->lastCumulativeValues,
             array_flip($activeLines)
         );
-        
+
         // Force garbage collection
         if (function_exists('gc_collect_cycles')) {
             gc_collect_cycles();
         }
-        
+
         if ($this->option('d')) {
             $memoryUsage = memory_get_usage(true);
             $this->line("Memory cleanup performed. Current usage: " . number_format($memoryUsage / 1024 / 1024, 2) . " MB");
@@ -356,7 +356,7 @@ class InsDwpPollAlarm extends Command
             $stats = $this->deviceStats[$deviceName];
             $total = $stats['success_count'] + $stats['error_count'];
             $successRate = $total > 0 ? round(($stats['success_count'] / $total) * 100, 1) : 0;
-            
+
             $this->comment("Device {$deviceName} stats: {$successRate}% success rate ({$stats['success_count']}/{$total})");
         }
     }

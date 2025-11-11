@@ -26,7 +26,7 @@ new #[Layout("layouts.app")] class extends Component {
 
     #[Url]
     public string $line = "";
-    
+
     #[Url]
     public string $mechine = "";
 
@@ -102,14 +102,14 @@ new #[Layout("layouts.app")] class extends Component {
         if (empty($array)) {
             return 0;
         }
-        
+
         // Filter out non-numeric values
         $numericArray = array_filter($array, 'is_numeric');
-        
+
         if (empty($numericArray)) {
             return 0;
         }
-        
+
         // Get max value from the numeric array
         return max($numericArray);
     }
@@ -179,10 +179,10 @@ new #[Layout("layouts.app")] class extends Component {
         if (empty($standards)) {
             throw new InvalidArgumentException("Standards array cannot be empty.");
         }
-        
+
         $closest = null;
         $minDistance = PHP_INT_MAX;
-        
+
         foreach ($standards as $standard) {
             $distance = abs($actual - $standard);
             if ($distance < $minDistance) {
@@ -190,14 +190,14 @@ new #[Layout("layouts.app")] class extends Component {
                 $closest = $standard;
             }
         }
-        
+
         $difference = $actual - $closest;
         $direction = $difference > 0 ? 'Up' : ($difference < 0 ? 'Down' : 'Equal');
-        
+
         // Check if actual is between any two consecutive standards
         sort($standards);
         $isStandard = in_array($actual, $standards, true);
-        
+
         if (!$isStandard && count($standards) > 1) {
             for ($i = 0; $i < count($standards) - 1; $i++) {
                 if ($actual > $standards[$i] && $actual < $standards[$i + 1]) {
@@ -206,7 +206,7 @@ new #[Layout("layouts.app")] class extends Component {
                 }
             }
         }
-        
+
         return [
             'actual'           => $actual,
             'closest_standard' => $closest,
@@ -350,7 +350,7 @@ new #[Layout("layouts.app")] class extends Component {
                     <tbody>
                         @foreach ($counts as $count)
                             @php
-                                $pv = json_decode($count->pv, true);
+                                $pv = json_decode($count->pv, true)['waveforms'];
                                 $toeHeelArray = $pv[0] ?? null;
                                 $sideArray = $pv[1] ?? null;
 

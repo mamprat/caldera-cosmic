@@ -45,8 +45,10 @@ new class extends Component {
     public function mount()
     {
         // today for init start and end date
-        $this->start_at = Carbon::today()->toDateString();
-        $this->end_at = Carbon::today()->toDateString();
+        if (empty($this->start_at) && empty($this->end_at)) {
+            $this->start_at = Carbon::today()->toDateString();
+            $this->end_at = Carbon::today()->toDateString();
+        }
 
         $this->dispatch("update-menu", $this->view);
         $this->updateData();
@@ -78,7 +80,7 @@ new class extends Component {
     /**
      * GET DATA MACHINES
      * Description : This code for get data machines on database ins_dwp_device
-     */ 
+     */
     private function getDataMachines($selectedLine = null)
     {
         if (!$selectedLine) {
@@ -142,7 +144,7 @@ new class extends Component {
             $latestCountsQuery->whereBetween('created_at', [$start, $end]);
             $outputsQuery->whereBetween('created_at', [$start, $end]);
         }
-        
+
         // Execute the queries
         $latestCounts = $latestCountsQuery->get();
         $allOutputs = $outputsQuery->get();
@@ -162,15 +164,17 @@ new class extends Component {
             $leftLast = $latestCounts->where('mechine', $machineName)->where('position', 'L')->first();
             $rightLast = $latestCounts->where('mechine', $machineName)->where('position', 'R')->first();
 
-            $leftPv = $leftLast ? (json_decode($leftLast->pv, true) ?? [[0], [0]]) : [[0], [0]];
-            $rightPv = $rightLast ? (json_decode($rightLast->pv, true) ?? [[0], [0]]) : [[0], [0]];
+            // Parse enhanced PV structure
+            $leftPv = $leftLast ? (json_decode($leftLast->pv, true) ?? null) : null;
+            $rightPv = $rightLast ? (json_decode($rightLast->pv, true) ?? null) : null;
 
-            // Get medians from the arrays and round them
-            $leftToesHeels = $leftPv[0] ?? [0];
-            $leftSides = $leftPv[1] ?? [0];
-            $rightToesHeels = $rightPv[0] ?? [0];
-            $rightSides = $rightPv[1] ?? [0];
+            // Extract waveforms from enhanced PV structure
+            $leftWaveforms = $leftPv['waveforms'] ?? [[0], [0]];
+            $rightWaveforms = $rightPv['waveforms'] ?? [[0], [0]];
+
+            // Get peaks from waveforms
             $leftData = [
+<<<<<<< HEAD
                 // 'side' => round($this->getMax($leftSides)), 
                 // 'toeHeel' => round($this->getMax($leftToesHeels))
                 'side' => round($this->getMedian($leftSides)), 
@@ -181,20 +185,52 @@ new class extends Component {
                 // 'toeHeel' => round($this->getMax($rightToesHeels))
                 'side' => round($this->getMedian($rightSides)), 
                 'toeHeel' => round($this->getMedian($rightToesHeels))
+=======
+                'toeHeel' => round($this->getMax($leftWaveforms[0] ?? [0])),
+                'side' => round($this->getMax($leftWaveforms[1] ?? [0]))
             ];
-            // --- FIXED: Correctly calculate average from all recent records ---
-            $allPvs = [];
+            $rightData = [
+                'toeHeel' => round($this->getMax($rightWaveforms[0] ?? [0])),
+                'side' => round($this->getMax($rightWaveforms[1] ?? [0]))
+>>>>>>> dee3c05d05eee4d5c782d49d2efd437b82501077
+            ];
+            // Calculate average from recent records using enhanced PV structure
+            $allPeaks = [];
             if (isset($recentRecords[$machineName])) {
                 foreach ($recentRecords[$machineName] as $record) {
-                    $decodedPvs = json_decode($record->pv, true) ?? [];
-                    if (is_array($decodedPvs) && count($decodedPvs) >= 2) {
-                        // Add all values from both toe_heel and side arrays
-                        $allPvs = array_merge($allPvs, $decodedPvs[0] ?? [], $decodedPvs[1] ?? []);
+                    $decodedPv = json_decode($record->pv, true) ?? [];
+                    // Check for enhanced PV structure
+                    if (isset($decodedPv['waveforms']) && is_array($decodedPv['waveforms'])) {
+                        // Use waveforms from enhanced structure
+                        $waveforms = $decodedPv['waveforms'];
+                        if (isset($waveforms[0]) && is_array($waveforms[0])) {
+                            $allPeaks = array_merge($allPeaks, $waveforms[0]);
+                        }
+                        if (isset($waveforms[1]) && is_array($waveforms[1])) {
+                            $allPeaks = array_merge($allPeaks, $waveforms[1]);
+                        }
+                    } elseif (is_array($decodedPv) && count($decodedPv) >= 2) {
+                        // Fallback for old format
+                        $allPeaks = array_merge($allPeaks, $decodedPv[0] ?? [], $decodedPv[1] ?? []);
                     }
                 }
             }
-            $nonZeroValues = array_filter($allPvs, fn($v) => is_numeric($v) && $v > 0);
+            $nonZeroValues = array_filter($allPeaks, fn($v) => is_numeric($v) && $v > 0);
             $averagePressure = !empty($nonZeroValues) ? round(array_sum($nonZeroValues) / count($nonZeroValues)) : 0;
+
+            // Get average press time from enhanced PV data
+            $avgPressTime = 0;
+            $pressTimeCount = 0;
+            if (isset($recentRecords[$machineName])) {
+                foreach ($recentRecords[$machineName] as $record) {
+                    $decodedPv = json_decode($record->pv, true) ?? [];
+                    if (isset($decodedPv['quality']['actual_cycle_time'])) {
+                        $avgPressTime += $decodedPv['quality']['actual_cycle_time'];
+                        $pressTimeCount++;
+                    }
+                }
+            }
+            $avgPressTime = $pressTimeCount > 0 ? round($avgPressTime / $pressTimeCount) : 16;
 
             $statuses = [
                 'leftToeHeel'  => $this->getStatus($leftData['toeHeel']),
@@ -216,6 +252,7 @@ new class extends Component {
                 ],
                 'overallStatus' => in_array('alert', $statuses) ? 'alert' : 'normal',
                 'average' => $averagePressure,
+                'avgPressTime' => $avgPressTime,
                 'output' => [
                     'left'  => $outputCounts[$machineName]['L'] ?? 0,
                     'right' => $outputCounts[$machineName]['R'] ?? 0,
@@ -276,10 +313,6 @@ new class extends Component {
 
     public function getPressureReadingStats()
     {
-        [$minStd, $maxStd] = $this->stdRange;
-        $standardReadings = 0;
-        $notStandardReadings = 0;
-
         $machineConfigs = $this->getDataMachines($this->line);
         $machineNames = array_column($machineConfigs, 'name');
 
@@ -291,10 +324,9 @@ new class extends Component {
             ];
         }
 
-        // Fetch ALL records (L and R) without grouping
+        // Use std_error boolean array for much faster quality checking
         $query = InsDwpCount::whereIn('mechine', $machineNames)
-            ->whereIn('position', ['L', 'R'])
-            ->select('mechine', 'pv', 'position', 'created_at');
+            ->select('std_error');
 
         if ($this->start_at && $this->end_at) {
             $start = Carbon::parse($this->start_at);
@@ -302,53 +334,28 @@ new class extends Component {
             $query->whereBetween('created_at', [$start, $end]);
         }
 
-        // Group records into cycles by rounding created_at to nearest 5 seconds
-        $cycles = [];
+        $standardCount = 0;
+        $notStandardCount = 0;
 
+        // Process records efficiently using boolean quality indicators
         foreach ($query->cursor() as $record) {
-            // Round timestamp to nearest 5 seconds to group near-simultaneous L/R
-            $roundedTime = Carbon::parse($record->created_at)
-                ->floorSeconds(5)
-                ->format('Y-m-d H:i:s');
+            $stdError = json_decode($record->std_error, true);
 
-            $key = $record->mechine . '|' . $roundedTime;
-
-            if (!isset($cycles[$key])) {
-                $cycles[$key] = ['L' => null, 'R' => null];
-            }
-
-            if (in_array($record->position, ['L', 'R'])) {
-                $cycles[$key][$record->position] = json_decode($record->pv, true);
-            }
-        }
-
-        // Now process only complete cycles (both L and R present)
-        foreach ($cycles as $cycle) {
-            if (
-                is_array($cycle['L']) && count($cycle['L']) >= 2 &&
-                is_array($cycle['R']) && count($cycle['R']) >= 2
-            ) {
-                $allValues = array_merge(
-                    $cycle['L'][0] ?? [], $cycle['L'][1] ?? [],
-                    $cycle['R'][0] ?? [], $cycle['R'][1] ?? []
-                );
-
-                foreach ($allValues as $value) {
-                    if (is_numeric($value)) {
-                        if ($value >= $minStd && $value <= $maxStd) {
-                            $standardReadings++;
-                        } else {
-                            $notStandardReadings++;
-                        }
-                    }
+            if (is_array($stdError) && isset($stdError[0][0]) && isset($stdError[1][0])) {
+                // Both sensors good = standard
+                if ($stdError[0][0] == 1 && $stdError[1][0] == 1) {
+                    $standardCount++;
+                } else {
+                    // Any sensor bad = not standard
+                    $notStandardCount++;
                 }
             }
         }
 
         return [
-            'total_count' => $standardReadings + $notStandardReadings,
-            'standard_count' => $standardReadings,
-            'not_standard_count' => $notStandardReadings,
+            'total_count' => $standardCount + $notStandardCount,
+            'standard_count' => $standardCount,
+            'not_standard_count' => $notStandardCount,
         ];
     }
 
@@ -374,12 +381,12 @@ new class extends Component {
         // Filter out non-numeric values
         $numericArray = array_filter($array, 'is_numeric');
         if (empty($numericArray)) return 0;
-        
+
         sort($numericArray);
         $count = count($numericArray);
         $middle = floor(($count - 1) / 2);
         $median = ($count % 2) ? $numericArray[$middle] : ($numericArray[$middle] + $numericArray[$middle + 1]) / 2;
-        
+
         return round($median);
     }
 
@@ -388,14 +395,14 @@ new class extends Component {
         if (empty($array)) {
             return 0;
         }
-        
+
         // Filter out non-numeric values
         $numericArray = array_filter($array, 'is_numeric');
-        
+
         if (empty($numericArray)) {
             return 0;
         }
-        
+
         // Get max value from the numeric array
         return max($numericArray);
     }
@@ -528,7 +535,7 @@ new class extends Component {
         $perf = $this->getPerformanceData($this->machineData);
         $daily = $perf['daily'] ?? ['standard' => 100, 'outOfStandard' => 0];
         $online = $this->onlineMonitoringData ?? ['online' => 100, 'offline' => 0];
-        
+
         // === NEW: Get DWP Time Constraint Chart Data ===
         $dwpData = $this->getDwpTimeConstraintData();
 
@@ -629,7 +636,7 @@ new class extends Component {
                     } else {
                         console.warn('[DWP Dashboard] onlineSystemMonitoring canvas not found');
                     }
-                    
+
                      // --- 5. === NEW: DWP TIME CONSTRAINT CHART (line) === ---
                     const dwpCtx = document.getElementById('dwpTimeConstraintChart');
                     if (dwpCtx) {
@@ -639,6 +646,7 @@ new class extends Component {
                                 try { window.__dwpTimeConstraintChart.destroy(); } catch(e){}
                             }
                             window.__dwpTimeConstraintChart = new Chart(ctx3, {
+<<<<<<< HEAD
                                 type: 'line',
                                 data: dwpData, // Use the injected data
                                 options: {
@@ -663,6 +671,39 @@ new class extends Component {
                                         tooltip: {
                                             bodyColor: theme.textColor,
                                             titleColor: theme.textColor
+=======
+                            type: 'line',
+                            data: dwpData,
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                scales: {
+                                    x: {
+                                        grid: {
+                                            display: true,
+                                            color: '#e5e7eb',
+                                            drawBorder: true,
+                                            drawOnChartArea: true,
+                                            drawTicks: true
+                                        },
+                                        ticks: {
+                                            color: '#000000',
+                                            font: { size: 11 }
+                                        }
+                                    },
+                                    y: {
+                                        beginAtZero: true,
+                                        grid: {
+                                            display: true,
+                                            color: '#e5e7eb',
+                                            drawBorder: true,
+                                            drawOnChartArea: true,
+                                            drawTicks: true
+                                        },
+                                        ticks: {
+                                            color: '#000000',
+                                            font: { size: 17 }
+>>>>>>> dee3c05d05eee4d5c782d49d2efd437b82501077
                                         }
                                     }
                                 }
@@ -699,9 +740,9 @@ new class extends Component {
         }
         $activityTimestamps = $this->getActivityTimestamps($machineNames, Carbon::parse($period->start), Carbon::parse($period->end));
         $totalDowntime = $this->calculateTotalDowntime($activityTimestamps, Carbon::parse($period->start), Carbon::parse($period->end));
-        
+
         $onlineDuration = $period->totalDuration - $totalDowntime;
-        
+
         return [
             'percentages' => $this->calculatePercentages($period->totalDuration, $totalDowntime),
             'total_hours' => $onlineDuration / 3600, // in hours
@@ -716,7 +757,7 @@ new class extends Component {
             ->min('created_at');
 
         $end = now()->format('Y-m-d H:i:s');
-        
+
         if (!$start) {
             return (object) [
                 'start' => now()->format('Y-m-d H:i:s'),
@@ -724,9 +765,9 @@ new class extends Component {
                 'totalDuration' => 0
             ];
         }
-        
+
         $totalDuration = Carbon::parse($start)->diffInSeconds(Carbon::parse($end));
-        
+
         return (object) [
             'start' => $start,
             'end' => $end,
@@ -795,21 +836,21 @@ new class extends Component {
         $hours = floor($seconds / 3600);
         $minutes = floor(($seconds % 3600) / 60);
         $remainingSeconds = $seconds % 60;
-        
+
         $parts = [];
-        
+
         if ($hours > 0) {
             $parts[] = $hours . ' hour' . ($hours !== 1 ? 's' : '');
         }
-        
+
         if ($minutes > 0) {
             $parts[] = $minutes . ' minute' . ($minutes !== 1 ? 's' : '');
         }
-        
+
         if ($remainingSeconds > 0 || empty($parts)) { // Always show seconds if no other units, or if there are remaining seconds
             $parts[] = $remainingSeconds . ' second' . ($remainingSeconds !== 1 ? 's' : '');
         }
-        
+
         return implode(' ', $parts);
     }
 
@@ -818,11 +859,11 @@ new class extends Component {
         if ($totalDuration <= 0) {
             return ['online' => 0, 'offline' => 100];
         }
-        
+
         $onlineDuration = $totalDuration - $totalDowntime;
         $onlinePercentage = ($onlineDuration / $totalDuration) * 100;
         $offlinePercentage = ($totalDowntime / $totalDuration) * 100;
-        
+
         return [
             'online' => round($onlinePercentage, 2),
             'offline' => round($offlinePercentage, 2)
@@ -838,9 +879,9 @@ new class extends Component {
 <div>
     <div class="grid grid-cols-1 lg:grid-cols-1 gap-6 mb-6">
         <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-4 flex items-center justify-between">
-            
+
             <div class="flex items-center">
-                
+
                 <div>
                     <div class="flex mb-2 text-xs text-neutral-500">
                         <x-dropdown align="left" width="48">
@@ -892,7 +933,7 @@ new class extends Component {
                 </div>
             </div>
             <div class="">
-                <a href="/insights/dwp/data/fullscreen">
+                <a href="/insights/dwp/data/fullscreen?start_at={{ $this->start_at }}&end_at={{ $this->start_at }}">
                     <span class="icon-expand font-bold text-2xl">
                     </span>
                 </a>
@@ -1034,13 +1075,26 @@ new class extends Component {
                                     </div>
                                 </div>
                             </div>
-                            <!-- Output Section -->
+                            <!-- avg press time -->
                             <div class="grid grid-cols-1 gap-2 text-center mt-4">
                                 <div>
-                                    <h2 class="text-md text-neutral-600 dark:text-neutral-400">Output</h2>
+                                    <h2 class="text-md text-neutral-600 dark:text-neutral-400">Average Press Time</h2>
                                     <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg mb-2">
+<<<<<<< HEAD
                                         <!-- {{ $machine['output']['left'] ?? 0 }} -->
                                         {{ ($machine['output']['left'] ?? 0) + ($machine['output']['right'] ?? 0) }}
+=======
+                                        {{ $machine['avgPressTime'] ?? 16 }} sec
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Output Section -->
+                            <div class="grid grid-cols-1 gap-2 text-center">
+                                <div>
+                                    <h2 class="text-md text-neutral-600 dark:text-neutral-400">Output</h2>
+                                    <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg">
+                                        {{ $machine['output']['left'] ?? 0 }}
+>>>>>>> dee3c05d05eee4d5c782d49d2efd437b82501077
                                     </div>
                                 </div>
                             </div>

@@ -47,7 +47,11 @@ new class extends Component {
     ];
 
     public $metric = null;
+<<<<<<< HEAD
     private const CORRECTION_THRESHOLD = 0.07;
+=======
+    private const CORRECTION_THRESHOLD = 0.05;
+>>>>>>> dee3c05d05eee4d5c782d49d2efd437b82501077
     
     public function getCanDownloadBatchCsvProperty(): bool
     {
