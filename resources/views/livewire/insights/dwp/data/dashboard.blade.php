@@ -174,7 +174,7 @@ new class extends Component {
 
             // Get peaks from waveforms
             $leftData = [
-<<<<<<< HEAD
+                
                 // 'side' => round($this->getMax($leftSides)), 
                 // 'toeHeel' => round($this->getMax($leftToesHeels))
                 'side' => round($this->getMedian($leftSides)), 
@@ -185,14 +185,14 @@ new class extends Component {
                 // 'toeHeel' => round($this->getMax($rightToesHeels))
                 'side' => round($this->getMedian($rightSides)), 
                 'toeHeel' => round($this->getMedian($rightToesHeels))
-=======
+
                 'toeHeel' => round($this->getMax($leftWaveforms[0] ?? [0])),
                 'side' => round($this->getMax($leftWaveforms[1] ?? [0]))
             ];
             $rightData = [
                 'toeHeel' => round($this->getMax($rightWaveforms[0] ?? [0])),
                 'side' => round($this->getMax($rightWaveforms[1] ?? [0]))
->>>>>>> dee3c05d05eee4d5c782d49d2efd437b82501077
+
             ];
             // Calculate average from recent records using enhanced PV structure
             $allPeaks = [];
@@ -646,7 +646,7 @@ new class extends Component {
                                 try { window.__dwpTimeConstraintChart.destroy(); } catch(e){}
                             }
                             window.__dwpTimeConstraintChart = new Chart(ctx3, {
-<<<<<<< HEAD
+
                                 type: 'line',
                                 data: dwpData, // Use the injected data
                                 options: {
@@ -671,7 +671,7 @@ new class extends Component {
                                         tooltip: {
                                             bodyColor: theme.textColor,
                                             titleColor: theme.textColor
-=======
+
                             type: 'line',
                             data: dwpData,
                             options: {
@@ -703,7 +703,7 @@ new class extends Component {
                                         ticks: {
                                             color: '#000000',
                                             font: { size: 17 }
->>>>>>> dee3c05d05eee4d5c782d49d2efd437b82501077
+
                                         }
                                     }
                                 }
@@ -1080,10 +1080,10 @@ new class extends Component {
                                 <div>
                                     <h2 class="text-md text-neutral-600 dark:text-neutral-400">Average Press Time</h2>
                                     <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg mb-2">
-<<<<<<< HEAD
+
                                         <!-- {{ $machine['output']['left'] ?? 0 }} -->
                                         {{ ($machine['output']['left'] ?? 0) + ($machine['output']['right'] ?? 0) }}
-=======
+
                                         {{ $machine['avgPressTime'] ?? 16 }} sec
                                     </div>
                                 </div>
@@ -1094,7 +1094,7 @@ new class extends Component {
                                     <h2 class="text-md text-neutral-600 dark:text-neutral-400">Output</h2>
                                     <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg">
                                         {{ $machine['output']['left'] ?? 0 }}
->>>>>>> dee3c05d05eee4d5c782d49d2efd437b82501077
+
                                     </div>
                                 </div>
                             </div>
