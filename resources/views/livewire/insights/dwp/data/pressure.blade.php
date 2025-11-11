@@ -110,12 +110,12 @@ new #[Layout("layouts.app")] class extends Component {
         if (empty($array)) return 0;
         $numericArray = array_filter($array, 'is_numeric');
         if (empty($numericArray)) return 0;
-
+        
         sort($numericArray);
         $count = count($numericArray);
         $middle = floor(($count - 1) / 2);
         $median = ($count % 2) ? $numericArray[$middle] : ($numericArray[$middle] + $numericArray[$middle + 1]) / 2;
-
+        
         return round($median);
     }
 
@@ -146,10 +146,7 @@ new #[Layout("layouts.app")] class extends Component {
         } else {
             $q1 = $min;
         }
-
-
-        // Q3 (Median of upper half)
-
+        
         $upper_half = array_slice($data, ($count % 2 === 0) ? $mid_index : $mid_index + 1);
         $q3 = 0;
         if (!empty($upper_half)) {
@@ -161,16 +158,17 @@ new #[Layout("layouts.app")] class extends Component {
         } else {
              $q3 = $max;
         }
-
-
-        // Return the 5-point summary, rounded
-
+        
         return array_map(fn($v) => round($v, 2), [$min, $q1, $median, $q3, $max]);
     }
 
     /**
-     * Calculate deviation statistics based on pressure readings
-     * Threshold: Minor (<5 KG), Major (>5 KG), Critical (>10 KG)
+     * Calculate OUTPUT QUALITY statistics
+     * 
+     * Logic: 
+     * - Each database record is ONE independent measurement/output
+     * - Standard: ALL sensor readings in PV within [30, 45]
+     * - Out of Standard: ANY sensor reading outside [30, 45]
      */
     private function calculateDeviations()
     {
@@ -190,85 +188,91 @@ new #[Layout("layouts.app")] class extends Component {
 
         $pressureData = $dataRaw->whereNotNull('pv')->get();
         
-        $totalMeasurements = $pressureData->count();
-        $totalSections = 0;
-        $totalDeviations = 0;
-        $deviationSections = 0;
-        $majorPlusDeviations = 0;
-        $majorPlusSections = 0;
-        $criticalDeviations = 0;
-        $criticalSections = 0;
+        $totalOutputStandard = 0;
+        $totalOutputOutOfStandard = 0;
         $severityCount = ["minor" => 0, "major" => 0, "critical" => 0];
 
-        $minStd = $this->stdRange[0];
-        $maxStd = $this->stdRange[1];
+        $minStd = $this->stdRange[0]; // 30
+        $maxStd = $this->stdRange[1]; // 45
 
+        // Process each record independently
         foreach ($pressureData as $record) {
             $pv = json_decode($record->pv, true);
             
             if (!is_array($pv) || count($pv) < 2) {
                 continue;
             }
-
+            
             $toeHeelArray = $pv[0] ?? [];
             $sideArray = $pv[1] ?? [];
             
-            // Process each sensor value (4 sections: TH-L, TH-R, Side-L, Side-R)
-            $allValues = array_merge($toeHeelArray, $sideArray);
+            // Collect all sensor readings (filter valid numeric values > 0)
+            $allSensorReadings = [];
             
-            foreach ($allValues as $value) {
-                if (!is_numeric($value)) continue;
-                
-                $totalSections++;
-                
-                // Calculate deviation from standard range [30, 45]
-                $deviation = 0;
-                if ($value < $minStd) {
-                    $deviation = $minStd - $value;
-                } elseif ($value > $maxStd) {
-                    $deviation = $value - $maxStd;
-                }
-                
-                if ($deviation > 0) {
-                    $totalDeviations++;
-                    $deviationSections++;
+            $validToeHeel = array_filter($toeHeelArray, fn($v) => is_numeric($v) && $v > 0);
+            $validSide = array_filter($sideArray, fn($v) => is_numeric($v) && $v > 0);
+            
+            $allSensorReadings = array_merge($validToeHeel, $validSide);
+            
+            // Skip if no valid readings
+            if (empty($allSensorReadings)) {
+                continue;
+            }
+            
+            // Check if ANY reading is out of standard range
+            $hasOutOfStandard = false;
+            $worstDeviation = 0;
+            
+            foreach ($allSensorReadings as $value) {
+                if ($value < $minStd || $value > $maxStd) {
+                    $hasOutOfStandard = true;
                     
-                    // NEW THRESHOLD: Minor (<5 KG), Major (>5 KG), Critical (>10 KG)
-                    if ($deviation > 10) {
-                        // Critical: >10 KG from standard
-                        $severityCount["critical"]++;
-                        $majorPlusDeviations++;
-                        $majorPlusSections++;
-                        $criticalDeviations++;
-                        $criticalSections++;
-                    } elseif ($deviation > 5) {
-                        // Major: >5 KG from standard
-                        $severityCount["major"]++;
-                        $majorPlusDeviations++;
-                        $majorPlusSections++;
-                    } else {
-                        // Minor: <5 KG from standard
-                        $severityCount["minor"]++;
+                    // Calculate deviation to classify severity
+                    $deviation = 0;
+                    if ($value < $minStd) {
+                        $deviation = $minStd - $value;
+                    } elseif ($value > $maxStd) {
+                        $deviation = $value - $maxStd;
+                    }
+                    
+                    if ($deviation > $worstDeviation) {
+                        $worstDeviation = $deviation;
                     }
                 }
             }
+            
+            // Classify this output
+            if ($hasOutOfStandard) {
+                $totalOutputOutOfStandard++;
+                
+                // Classify by worst deviation found
+                if ($worstDeviation > 10) {
+                    $severityCount["critical"]++;
+                } elseif ($worstDeviation > 5) {
+                    $severityCount["major"]++;
+                } else {
+                    $severityCount["minor"]++;
+                }
+            } else {
+                $totalOutputStandard++;
+            }
         }
 
-        // Calculate rates
-        $criticalRate = $totalSections > 0 
-            ? round(($criticalSections / $totalSections) * 100, 2) 
+        $totalOutput = $totalOutputStandard + $totalOutputOutOfStandard;
+        $outOfStandardRate = $totalOutput > 0 
+            ? round(($totalOutputOutOfStandard / $totalOutput) * 100, 2) 
             : 0;
 
         $this->deviationSummary = [
-            "total_measurements" => $totalMeasurements,
-            "total_sections" => $totalSections,
-            "total_deviations" => $totalDeviations,
-            "deviation_sections" => $deviationSections,
-            "major_plus_deviations" => $majorPlusDeviations,
-            "major_plus_sections" => $majorPlusSections,
-            "critical_deviations" => $criticalDeviations,
-            "critical_sections" => $criticalSections,
-            "critical_rate" => $criticalRate,
+            "total_measurements" => $totalOutput,  // Total Output
+            "total_sections" => $totalOutputStandard,  // Output Standard
+            "total_deviations" => $totalOutputOutOfStandard,  // Output Out of Standard
+            "deviation_sections" => $totalOutputOutOfStandard, // Same as above for compatibility
+            "major_plus_deviations" => $severityCount["major"] + $severityCount["critical"],
+            "major_plus_sections" => $severityCount["major"] + $severityCount["critical"],
+            "critical_deviations" => $severityCount["critical"],
+            "critical_sections" => $severityCount["critical"],
+            "critical_rate" => $outOfStandardRate,  // % Out of Standard
         ];
 
         $this->severityBreakdown = $severityCount;
@@ -316,11 +320,6 @@ new #[Layout("layouts.app")] class extends Component {
         $pressureData = $dataRaw->whereNotNull('pv')->get()->toArray();
         $counts = collect($pressureData);
         
-
-        $presureData = $dataRaw->whereNotNull('pv')->get()->toArray();
-        $counts = collect($presureData);
-
-        // Prepare arrays to hold median values for each of the 4 sensors
         $toeheel_left_data = [];
         $toeheel_right_data = [];
         $side_left_data = [];
@@ -328,7 +327,6 @@ new #[Layout("layouts.app")] class extends Component {
 
         foreach ($counts as $count) {
             $arrayPv = json_decode($count['pv'], true);
-
             if (isset($arrayPv[0]) && isset($arrayPv[1])) {
                 $toeHeelArray = $arrayPv[0];
                 $sideArray = $arrayPv[1];
@@ -343,33 +341,6 @@ new #[Layout("layouts.app")] class extends Component {
                     $toeheel_right_data[] = $toeHeelMedian;
                     $side_right_data[] = $sideMedian;
                 }
-
-
-            // Check for enhanced PV structure first
-            if (isset($arrayPv['waveforms']) && is_array($arrayPv['waveforms'])) {
-                // Enhanced format: extract waveforms
-                $waveforms = $arrayPv['waveforms'];
-                $toeHeelArray = $waveforms[0] ?? [];
-                $sideArray = $waveforms[1] ?? [];
-            } elseif (isset($arrayPv[0]) && isset($arrayPv[1])) {
-                // Legacy format: direct array access
-                $toeHeelArray = $arrayPv[0];
-                $sideArray = $arrayPv[1];
-            } else {
-                // Invalid format, skip this record
-                continue;
-            }
-
-            // Calculate median for each sensor array
-            $toeHeelMedian = $this->getMedian($toeHeelArray);
-            $sideMedian = $this->getMedian($sideArray);
-
-            if ($count['position'] === 'L') {
-                $toeheel_left_data[] = $toeHeelMedian;
-                $side_left_data[] = $sideMedian;
-            } elseif ($count['position'] === 'R') {
-                $toeheel_right_data[] = $toeHeelMedian;
-                $side_right_data[] = $sideMedian;
             }
         }
 
@@ -406,7 +377,7 @@ new #[Layout("layouts.app")] class extends Component {
 
     private function renderCharts()
     {
-        // Severity breakdown pie chart with updated labels
+        // Output quality pie chart - classification by worst deviation found
         $severityChartData = [
             "labels" => [__("Minor (<5 KG)"), __("Major (>5 KG)"), __("Critical (>10 KG)")],
             "datasets" => [
@@ -434,7 +405,7 @@ new #[Layout("layouts.app")] class extends Component {
                             title: {
                                 display: true,
                                 text: '" .
-                __("Klasifikasi Deviasi") .
+                __("Klasifikasi Output Tidak Standard") .
                 "',
                                 font: {
                                     size: 16,
@@ -523,7 +494,7 @@ new #[Layout("layouts.app")] class extends Component {
         <!-- Boxplot Chart -->
         <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
             <h3 class="text-lg font-semibold mb-4 text-neutral-900 dark:text-neutral-100">
-                DWP {{ $machine ? 'Machine ' . $machine : 'All' }} Performance Boxplot
+                DWP {{ $machine ? 'Machine ' . $machine : 'xxx' }} Performance Boxplot
             </h3>
             <div
                 x-data="{
@@ -636,7 +607,6 @@ new #[Layout("layouts.app")] class extends Component {
     </div>
   </div>
 
-
   <!-- Main Content Grid: Chart + KPI Cards -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
     <!-- Pie Chart -->
@@ -649,22 +619,22 @@ new #[Layout("layouts.app")] class extends Component {
     <!-- KPI Cards Grid -->
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
-            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Total Pengukuran") }}</div>
+            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Total Output") }}</div>
             <div class="text-2xl font-bold">{{ number_format($deviationSummary["total_measurements"] ?? 0) }}</div>
-            <div class="text-xs text-neutral-500 mt-1">{{ number_format($deviationSummary["total_sections"] ?? 0)}}</div>
+            <div class="text-xs text-neutral-500 mt-1">{{ number_format($deviationSummary["total_sections"] ?? 0) . " " . __("standard") }}</div>
         </div>
         <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
             <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Total Quantity Deviasi") }}</div>
             <div class="text-2xl font-bold text-red-500">{{ number_format($deviationSummary["total_deviations"] ?? 0) }}</div>
-            <div class="text-xs text-neutral-500 mt-1">{{ number_format($deviationSummary["deviation_sections"] ?? 0) . " " . __("EA") }}</div>
+            <div class="text-xs text-neutral-500 mt-1">{{ __("out of standard") }}</div>
         </div>
         <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
-            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Deviasi Major") }}</div>
+            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Deviasi Major+") }}</div>
             <div class="text-2xl font-bold text-orange-600">{{ number_format($deviationSummary["major_plus_deviations"] ?? 0) }}</div>
-            <div class="text-xs text-neutral-500 mt-1">{{ number_format($deviationSummary["major_plus_sections"] ?? 0) . " " . __("sections") }}</div>
+            <div class="text-xs text-neutral-500 mt-1">{{ __("deviation >5 KG") }}</div>
         </div>
         <div class="bg-white dark:bg-neutral-800 shadow sm:rounded-lg p-6">
-            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Deviasi Critical") }}</div>
+            <div class="text-neutral-500 dark:text-neutral-400 text-xs uppercase mb-2">{{ __("Tingkat Output Tidak Standard") }}</div>
             <div
                 class="text-2xl font-bold {{ ($deviationSummary["critical_rate"] ?? 0) > 10 ? "text-red-500" : (($deviationSummary["critical_rate"] ?? 0) > 5 ? "text-yellow-500" : "text-green-500") }}"
             >
@@ -681,6 +651,3 @@ new #[Layout("layouts.app")] class extends Component {
         $wire.$dispatch('updated');
     </script>
 @endscript
-
-</div>
-
