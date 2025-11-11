@@ -47,8 +47,7 @@ new class extends Component {
     ];
 
     public $metric = null;
-
-    private const CORRECTION_THRESHOLD = 0.07;
+    private const CORRECTION_THRESHOLD = 0.05;
     
     public function getCanDownloadBatchCsvProperty(): bool
     {

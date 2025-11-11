@@ -175,12 +175,12 @@ new #[Layout("layouts.app")] class extends Component {
 
             // Get peaks from waveforms
             $leftData = [
-                'toeHeel' => round($this->getMax($leftWaveforms[0] ?? [0])),
-                'side' => round($this->getMax($leftWaveforms[1] ?? [0]))
+                'toeHeel' => round($this->getMedian($leftWaveforms[0] ?? [0])),
+                'side' => round($this->getMedian($leftWaveforms[1] ?? [0]))
             ];
             $rightData = [
-                'toeHeel' => round($this->getMax($rightWaveforms[0] ?? [0])),
-                'side' => round($this->getMax($rightWaveforms[1] ?? [0]))
+                'toeHeel' => round($this->getMedian($rightWaveforms[0] ?? [0])),
+                'side' => round($this->getMedian($rightWaveforms[1] ?? [0]))
             ];
 
             // Calculate average from recent records using enhanced PV structure
