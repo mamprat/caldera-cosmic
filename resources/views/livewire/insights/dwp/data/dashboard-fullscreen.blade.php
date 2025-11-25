@@ -33,6 +33,7 @@ new #[Layout("layouts.app")] class extends Component {
     public int $totalStandart = 0;
     public int $totalOutStandart = 0;
     public int $onlineTime = 0;
+    public string $offlineTime = "";
     public string $fullTimeFormat = "";
 
     // Add new properties for the top summary boxes
@@ -118,7 +119,7 @@ new #[Layout("layouts.app")] class extends Component {
         $this->onlineMonitoringData = $dataOnlineMonitoring['percentages'];
         $this->onlineTime = $dataOnlineMonitoring['total_hours'] ?? 0;
         $this->fullTimeFormat = $dataOnlineMonitoring['full_time_format'] ?? "";
-
+        $this->offlineTime = $dataOnlineMonitoring['offline_time_format'] ?? 0;
         // --- Step 1: Get latest sensor reading for each machine (Your query is already efficient) ---
         $latestCountsQuery = InsDwpCount::select('mechine', 'position', 'pv', 'created_at')
             ->whereIn('id', function ($query) use ($machineNames) {
@@ -136,7 +137,7 @@ new #[Layout("layouts.app")] class extends Component {
         // --- Step 3 (FIXED): Get all recent records for a correct average calculation ---
         $recentRecordsQuery = InsDwpCount::whereIn('mechine', $machineNames)
             ->where('created_at', '>=', now()->subDay())
-            ->select('mechine', 'pv');
+            ->select('mechine', 'pv', 'duration', 'position');
 
         // Apply date range filter to relevant queries
         if ($this->start_at && $this->end_at) {
@@ -175,12 +176,12 @@ new #[Layout("layouts.app")] class extends Component {
 
             // Get peaks from waveforms
             $leftData = [
-                'toeHeel' => round($this->getMax($leftWaveforms[0] ?? [0])),
-                'side' => round($this->getMax($leftWaveforms[1] ?? [0]))
+                'toeHeel' => round($this->getMedian($leftWaveforms[0] ?? [0])),
+                'side' => round($this->getMedian($leftWaveforms[1] ?? [0]))
             ];
             $rightData = [
-                'toeHeel' => round($this->getMax($rightWaveforms[0] ?? [0])),
-                'side' => round($this->getMax($rightWaveforms[1] ?? [0]))
+                'toeHeel' => round($this->getMedian($rightWaveforms[0] ?? [0])),
+                'side' => round($this->getMedian($rightWaveforms[1] ?? [0]))
             ];
 
             // Calculate average from recent records using enhanced PV structure
@@ -212,9 +213,8 @@ new #[Layout("layouts.app")] class extends Component {
             $pressTimeCount = 0;
             if (isset($recentRecords[$machineName])) {
                 foreach ($recentRecords[$machineName] as $record) {
-                    $decodedPv = json_decode($record->pv, true) ?? [];
-                    if (isset($decodedPv['quality']['actual_cycle_time'])) {
-                        $avgPressTime += $decodedPv['quality']['actual_cycle_time'];
+                    if (isset($record->duration)) {
+                        $avgPressTime += $record->duration;
                         $pressTimeCount++;
                     }
                 }
@@ -717,14 +717,16 @@ new #[Layout("layouts.app")] class extends Component {
             return [
                 'percentages' => ['online' => 0, 'offline' => 100],
                 'total_hours' => 0, // in hours
-                'full_time_format' => "0 hours 0 minutes 0 seconds"
+                'full_time_format' => "0 hours 0 minutes 0 seconds",
+                'offline_time_format' => "0 hours 0 minutes 0 seconds"
             ];
         }
         if (empty($machineNames)) {
             return [
                 'percentages' => ['online' => 0, 'offline' => 100],
                 'total_hours' => 0, // in hours
-                'full_time_format' => "0 hours 0 minutes 0 seconds"
+                'full_time_format' => "0 hours 0 minutes 0 seconds",
+                'offline_time_format' => "0 hours 0 minutes 0 seconds"
             ];
         }
         $activityTimestamps = $this->getActivityTimestamps($machineNames, Carbon::parse($period->start), Carbon::parse($period->end));
@@ -735,7 +737,8 @@ new #[Layout("layouts.app")] class extends Component {
         return [
             'percentages' => $this->calculatePercentages($period->totalDuration, $totalDowntime),
             'total_hours' => $onlineDuration / 3600, // in hours
-            'full_time_format' => $this->formatDuration($onlineDuration)
+            'full_time_format' => $this->formatDuration($onlineDuration),
+            'offline_time_format' => $this->formatDuration($totalDowntime)
         ];
     }
 
@@ -829,15 +832,15 @@ new #[Layout("layouts.app")] class extends Component {
         $parts = [];
 
         if ($hours > 0) {
-            $parts[] = $hours . ' hour' . ($hours !== 1 ? 's' : '');
+            $parts[] = $hours . ' hr' . ($hours !== 1 ? 's' : '');
         }
 
         if ($minutes > 0) {
-            $parts[] = $minutes . ' minute' . ($minutes !== 1 ? 's' : '');
+            $parts[] = $minutes . ' min' . ($minutes !== 1 ? 's' : '');
         }
 
         if ($remainingSeconds > 0 || empty($parts)) { // Always show seconds if no other units, or if there are remaining seconds
-            $parts[] = $remainingSeconds . ' second' . ($remainingSeconds !== 1 ? 's' : '');
+            $parts[] = $remainingSeconds . ' sec' . ($remainingSeconds !== 1 ? 's' : '');
         }
 
         return implode(' ', $parts);
@@ -888,18 +891,20 @@ new #[Layout("layouts.app")] class extends Component {
 
             <!-- Performance Machine -->
             <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
-                <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-4">Performance Machine</h2>
-                <div class="h-[150px]">
-                    <canvas id="dailyPerformanceChart" wire:ignore></canvas>
-                </div>
-                <div class="flex flex-col gap-2 mt-4">
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-green-500"></span>
-                        <span>Standard: {{ $this->totalStandart }}</span>
+                <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-4">Performance Machine DWP Pressure</h2>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="h-[150px]">
+                        <canvas id="dailyPerformanceChart" wire:ignore></canvas>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-red-600"></span>
-                        <span>Out Of Standard: {{ $this->totalOutStandart }}</span>
+                    <div class="flex flex-col gap-2 mt-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-green-500"></span>
+                            <span>Standard: {{ $this->totalStandart }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-red-600"></span>
+                            <span>Out Of Standard: {{ $this->totalOutStandart }}</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -910,19 +915,28 @@ new #[Layout("layouts.app")] class extends Component {
                     <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200">
                         Online System Monitoring
                     </h2>
-                    <span class="text-sm text-neutral-600 dark:text-neutral-400">{{ $this->fullTimeFormat }}</span>
                 </div>
-                <div class="h-[150px]">
-                    <canvas id="onlineSystemMonitoring" wire:ignore></canvas>
-                </div>
-                <div class="flex flex-col gap-2 mt-4">
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-green-500"></span>
-                        <span>Online</span>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="h-[150px]">
+                        <canvas id="onlineSystemMonitoring" wire:ignore></canvas>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-gray-300 dark:bg-gray-600"></span>
-                        <span>Offline</span>
+                    <div class="flex flex-col gap-1 mt-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-green-500"></span>
+                            <span>Online</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4"></span>
+                            <span class="text-sm text-gray-500 dark:text-gray-400">{{ $this->fullTimeFormat }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-gray-300 dark:bg-gray-600"></span>
+                            <span>Offline</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4"></span>
+                            <span class="text-sm text-gray-500 dark:text-gray-400">{{ $this->offlineTime }}</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -992,7 +1006,7 @@ new #[Layout("layouts.app")] class extends Component {
                                 <div class="text-center mt-4">
                                     <h3 class="text-sm text-neutral-600 dark:text-neutral-400">Output</h3>
                                     <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg">
-                                        {{ $machine['output']['left'] ?? 0 }}
+                                        {{ $machine['output']['left'] ?? 0 }} pairs
                                     </div>
                                 </div>
                             </div>

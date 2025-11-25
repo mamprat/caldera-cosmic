@@ -8,6 +8,7 @@ use App\Models\InsDwpCount;
 use App\Models\InsDwpTimeAlarmCount;
 use Livewire\WithPagination;
 use Livewire\Attributes\Url;
+use App\Helpers\GlobalHelpers;
 use Carbon\Carbon;
 
 new class extends Component {
@@ -17,6 +18,7 @@ new class extends Component {
     public array $stdRange = [30, 45];
     public $lastRecord = null;
     public $view = "dashboard";
+    public $helpers;
 
     #[Url]
     public string $start_at = "";
@@ -31,8 +33,8 @@ new class extends Component {
 
     public int $totalStandart = 0;
     public int $totalOutStandart = 0;
-    public int $onlineTime = 0;
-    public string $fullTimeFormat = "";
+    public int $onlineTime = 0;    public string $fullTimeFormat = "";
+    public string $offlineTime = "";
 
     // Add new properties for the top summary boxes
     public int $timeConstraintAlarm = 0;
@@ -104,6 +106,7 @@ new class extends Component {
 
     public function updateData()
     {
+        $helpers = new GlobalHelpers();
         $machineConfigs = $this->getDataMachines($this->line);
         $machineNames = array_column($machineConfigs, 'name');
 
@@ -117,6 +120,7 @@ new class extends Component {
         $this->onlineMonitoringData = $dataOnlineMonitoring['percentages'];
         $this->onlineTime = $dataOnlineMonitoring['total_hours'] ?? 0;
         $this->fullTimeFormat = $dataOnlineMonitoring['full_time_format'] ?? "";
+        $this->offlineTime = $dataOnlineMonitoring['offline_time_format'] ?? 0;
 
         // --- Step 1: Get latest sensor reading for each machine (Your query is already efficient) ---
         $latestCountsQuery = InsDwpCount::select('mechine', 'position', 'pv', 'created_at')
@@ -135,7 +139,7 @@ new class extends Component {
         // --- Step 3 (FIXED): Get all recent records for a correct average calculation ---
         $recentRecordsQuery = InsDwpCount::whereIn('mechine', $machineNames)
             ->where('created_at', '>=', now()->subDay())
-            ->select('mechine', 'pv');
+            ->select('mechine', 'pv', 'duration');
 
         // Apply date range filter to relevant queries
         if ($this->start_at && $this->end_at) {
@@ -174,12 +178,12 @@ new class extends Component {
 
             // Get peaks from waveforms
             $leftData = [
-                'toeHeel' => round($this->getMax($leftWaveforms[0] ?? [0])),
-                'side' => round($this->getMax($leftWaveforms[1] ?? [0]))
+                'toeHeel' => round($helpers->getMedian($leftWaveforms[0] ?? [0])),
+                'side' => round($helpers->getMedian($leftWaveforms[1] ?? [0]))
             ];
             $rightData = [
-                'toeHeel' => round($this->getMax($rightWaveforms[0] ?? [0])),
-                'side' => round($this->getMax($rightWaveforms[1] ?? [0]))
+                'toeHeel' => round($helpers->getMedian($rightWaveforms[0] ?? [0])),
+                'side' => round($helpers->getMedian($rightWaveforms[1] ?? [0]))
             ];
             // Calculate average from recent records using enhanced PV structure
             $allPeaks = [];
@@ -210,9 +214,8 @@ new class extends Component {
             $pressTimeCount = 0;
             if (isset($recentRecords[$machineName])) {
                 foreach ($recentRecords[$machineName] as $record) {
-                    $decodedPv = json_decode($record->pv, true) ?? [];
-                    if (isset($decodedPv['quality']['actual_cycle_time'])) {
-                        $avgPressTime += $decodedPv['quality']['actual_cycle_time'];
+                    if (isset($record->duration)) {
+                        $avgPressTime += $record->duration;
                         $pressTimeCount++;
                     }
                 }
@@ -360,38 +363,6 @@ new class extends Component {
             return 'warning';
         }
         return 'normal';
-    }
-
-    private function getMedian(array $array)
-    {
-        if (empty($array)) return 0;
-        // Filter out non-numeric values
-        $numericArray = array_filter($array, 'is_numeric');
-        if (empty($numericArray)) return 0;
-
-        sort($numericArray);
-        $count = count($numericArray);
-        $middle = floor(($count - 1) / 2);
-        $median = ($count % 2) ? $numericArray[$middle] : ($numericArray[$middle] + $numericArray[$middle + 1]) / 2;
-
-        return round($median);
-    }
-
-    private function getMax(array $array)
-    {
-        if (empty($array)) {
-            return 0;
-        }
-
-        // Filter out non-numeric values
-        $numericArray = array_filter($array, 'is_numeric');
-
-        if (empty($numericArray)) {
-            return 0;
-        }
-
-        // Get max value from the numeric array
-        return max($numericArray);
     }
 
     private function getLongestDuration(){
@@ -712,14 +683,16 @@ new class extends Component {
             return [
                 'percentages' => ['online' => 0, 'offline' => 100],
                 'total_hours' => 0, // in hours
-                'full_time_format' => "0 hours 0 minutes 0 seconds"
+                'full_time_format' => "0 hours 0 minutes 0 seconds",
+                'offline_time_format' => "0 hours 0 minutes 0 seconds"
             ];
         }
         if (empty($machineNames)) {
             return [
                 'percentages' => ['online' => 0, 'offline' => 100],
                 'total_hours' => 0, // in hours
-                'full_time_format' => "0 hours 0 minutes 0 seconds"
+                'full_time_format' => "0 hours 0 minutes 0 seconds",
+                'offline_time_format' => "0 hours 0 minutes 0 seconds"
             ];
         }
         $activityTimestamps = $this->getActivityTimestamps($machineNames, Carbon::parse($period->start), Carbon::parse($period->end));
@@ -730,7 +703,8 @@ new class extends Component {
         return [
             'percentages' => $this->calculatePercentages($period->totalDuration, $totalDowntime),
             'total_hours' => $onlineDuration / 3600, // in hours
-            'full_time_format' => $this->formatDuration($onlineDuration)
+            'full_time_format' => $this->formatDuration($onlineDuration),
+            'offline_time_format' => $this->formatDuration($totalDowntime)
         ];
     }
 
@@ -930,43 +904,54 @@ new class extends Component {
     <div class="grid grid-cols-1 gap-6">
         <!-- Top Row: 3 Cards -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <!-- Card 59: Performance Machine -->
+            <!-- Performance Machine -->
             <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
-                <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-4">Performance Machine</h2>
-                <div class="">
-                    <canvas class="h-[150px]" id="dailyPerformanceChart"></canvas>
-                </div>
-                <div class="flex flex-col gap-2 mt-4">
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-green-500"></span>
-                        <span>Standard : {{ $this->totalStandart }}</span>
+                <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-4">Performance Machine DWP Pressure</h2>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="h-[150px]">
+                        <canvas id="dailyPerformanceChart" wire:ignore></canvas>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-red-600"></span>
-                        <span>Out Of Standard : {{ $this->totalOutStandart }}</span>
+                    <div class="flex flex-col gap-2 mt-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-green-500"></span>
+                            <span>Standard: {{ $this->totalStandart }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-red-600"></span>
+                            <span>Out Of Standard: {{ $this->totalOutStandart }}</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Card 60: Online System Monitoring -->
+            <!-- Online System Monitoring -->
             <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200">
                         Online System Monitoring
                     </h2>
-                    <span class="text-sm text-neutral-600 dark:text-neutral-400">{{ $this->fullTimeFormat }}</span>
                 </div>
-                <div class="relative">
-                    <canvas class="h-[150px]" id="onlineSystemMonitoring" wire:ignore></canvas>
-                </div>
-                <div class="flex flex-col gap-2 mt-4">
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-green-500"></span>
-                        <span>Online</span>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="h-[150px]">
+                        <canvas id="onlineSystemMonitoring" wire:ignore></canvas>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-gray-300"></span>
-                        <span>Offline</span>
+                    <div class="flex flex-col gap-1 mt-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-green-500"></span>
+                            <span>Online</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4"></span>
+                            <span class="text-sm text-gray-500 dark:text-gray-400">{{ $this->fullTimeFormat }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-gray-300 dark:bg-gray-600"></span>
+                            <span>Offline</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4"></span>
+                            <span class="text-sm text-gray-500 dark:text-gray-400">{{ $this->offlineTime }}</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1073,7 +1058,7 @@ new class extends Component {
                                 <div>
                                     <h2 class="text-md text-neutral-600 dark:text-neutral-400">Output</h2>
                                     <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg">
-                                        {{ $machine['output']['left'] ?? 0 }}
+                                        {{ $machine['output']['left'] ?? 0 }} pairs
                                     </div>
                                 </div>
                             </div>

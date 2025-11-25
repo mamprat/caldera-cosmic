@@ -12,4 +12,4 @@ Schedule::command('app:data-cleanup')->daily();
 Schedule::command('app:sync-inv-query')->everyFiveMinutes();
 
 // DWP scheduled commands
-Schedule::command('app:ins-dwp-reset')->dailyAt('06:00');
+Schedule::command('app:ins-dwp-reset')->dailyAt('07:15');

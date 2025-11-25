@@ -63,58 +63,30 @@ new class extends Component {
 
     private function renderPressureChartClient()
     {
-        // --- MODE SIMULASI SIKLUS TUNGGAL (DEFAULT & HANYA INI) ---
-        $isTimeAxis = false; // Sumbu X akan menjadi detik (0-17), bukan waktu
-        $totalSeconds = 17;
-        $labels = range(0, $totalSeconds); // Sumbu X: 0, 1, 2, ... 17
+        $isTimeAxis = false;
+        $pvRaw = json_decode($this->detail['pv'] ?? '[]', true);
+        $waveforms = $pvRaw['waveforms'] ?? [];
+        $duration = (int) ($this->detail['duration'] ?? 0);
+        // Get values and timestamps
+        $toeHeelValuesRaw = $waveforms[0] ?? [];
+        $sideValuesRaw = $waveforms[1] ?? [];
+        $timestampsRaw = $pvRaw['timestamps'] ?? [];
 
-        $pvArray = json_decode($this->detail['pv'] ?? '[]', true)['waveforms'];
-        if (!is_array($pvArray)) {
-            $pvArray = []; // Pastikan $pvArray adalah array
-        }
+        // Repeat/hold values for each second
+        $toeHeelValues = $this->repeatWaveform($toeHeelValuesRaw, $timestampsRaw, $duration);
+        $sideValues = $this->repeatWaveform($sideValuesRaw, $timestampsRaw, $duration);
 
-        // --- Hasilkan data realistis untuk Toe/Heel ---
-        $peakSecondToeHeel = rand(6, 11); // Waktu puncak yang realistis
-        $peakValueToeHeel = $this->getMax($pvArray[0] ?? []); // Gunakan getMax
-        $toeHeelValues = [];
-        for ($i = 0; $i <= $totalSeconds; $i++) {
-            if ($i <= $peakSecondToeHeel) {
-                // Naik (menggunakan sqrt untuk kurva yang lebih mulus)
-                $val = $peakValueToeHeel * sqrt($i / $peakSecondToeHeel);
-            } else {
-                // Turun
-                $val = $peakValueToeHeel * (1 - (($i - $peakSecondToeHeel) / ($totalSeconds - $peakSecondToeHeel)));
-            }
-            // Bulatkan nilai dan tambahkan noise
-            $roundedVal = round($val);
-            $toeHeelValues[$i] = max(0, $roundedVal + rand(-100, 100) / 100);
-        }
+        // X axis: seconds from 0 to duration
+        $labels = range(1, $duration);
 
-        // --- Hasilkan data realistis untuk Side ---
-        $peakSecondSide = rand(5, 10); // Waktu puncak yang sedikit berbeda
-        $peakValueSide = $this->getMax($pvArray[1] ?? []); // Gunakan getMax
-        $sideValues = [];
-        for ($i = 0; $i <= $totalSeconds; $i++) {
-            if ($i <= $peakSecondSide) {
-                // Naik
-                $val = $peakValueSide * sqrt($i / $peakSecondSide);
-            } else {
-                // Turun
-                $val = $peakValueSide * (1 - (($i - $peakSecondSide) / ($totalSeconds - $peakSecondSide)));
-            }
-            // Bulatkan nilai dan tambahkan noise
-            $roundedVal = (int) round($val);
-            $sideValues[$i] = max(0, $roundedVal + rand(-100, 100) / 100);
-        }
-
+        // 4. Siapkan data untuk Chart.js
         $chartData = [
             'labels' => $labels,
             'toeHeel' => $toeHeelValues,
             'side' => $sideValues,
-            'isTimeAxis' => $isTimeAxis, // Kirim flag ke JS (selalu false)
+            'isTimeAxis' => $isTimeAxis,
         ];
 
-        // dd($chartData); // Dihapus
         $chartDataJson = json_encode($chartData);
 
         $this->js(
@@ -153,8 +125,6 @@ new class extends Component {
                                     data: hasData ? data.toeHeel : [],
                                     borderColor: '#ef4444',
                                     backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                    pointRadius: 4,
-                                    pointHoverRadius: 6,
                                     fill: false,
                                     tension: 0.4,
                                     stepped: false,
@@ -219,7 +189,7 @@ new class extends Component {
                                     type: 'linear', // Gunakan 'linear' karena labelnya 0, 1, 2...
                                     title: {
                                         display: true,
-                                        text: 'Seconds into Cycle', // Judul baru
+                                        text: 'Time (seconds)',
                                         color: theme.textColor
                                     },
                                     grid: {
@@ -230,7 +200,7 @@ new class extends Component {
                                     ticks: {
                                         color: theme.textColor,
                                         stepSize: 1 // Tampilkan 1, 2, 3...
-                                    }
+                                    },
                                 },
                                 y: {
                                     // --- KONFIGURASI SUMBU Y (tetap sama) ---
@@ -294,6 +264,51 @@ new class extends Component {
             })();
             "
         );
+    }
+
+    private function repeatWaveform(array $valuesRaw, array $timestampsRaw, int $duration): array {
+        $count = count($valuesRaw);
+        if ($count === 0 || count($timestampsRaw) !== $count) {
+            return [];
+        }
+        // Normalize timestamps to seconds from start
+        $startTs = (int)($timestampsRaw[0] / 1000);
+        $secValueMap = [];
+        $maxSec = 0;
+        for ($i = 0; $i < $count; $i++) {
+            $sec = (int)($timestampsRaw[$i] / 1000) - $startTs;
+            $secValueMap[$sec] = $valuesRaw[$i];
+            if ($sec > $maxSec) $maxSec = $sec;
+        }
+        // Build result array with repeated/held values
+        $result = [];
+        $lastValue = 0;
+        for ($sec = 0; $sec <= $maxSec; $sec++) {
+            if (isset($secValueMap[$sec])) {
+                $lastValue = $secValueMap[$sec];
+            }
+            $result[] = $lastValue;
+        }
+        // add 0 for lasting seconds up to duration
+        for ($sec = $maxSec + 1; $sec < $duration; $sec++) {
+            $result[] = 0;
+        }
+
+        // Ensure result has exactly $duration elements (labels are 1..$duration)
+        // - pad with trailing zeros if too short
+        // - trim if longer
+        if (count($result) < $duration) {
+            $result = array_pad($result, $duration, 0);
+        } elseif (count($result) > $duration) {
+            $result = array_slice($result, 0, $duration);
+        }
+
+        // Always set the last duration slot to zero so the chart ends at 0
+        if ($duration > 0) {
+            $result[$duration - 1] = 0;
+        }
+
+        return $result;
     }
 };
 ?>
