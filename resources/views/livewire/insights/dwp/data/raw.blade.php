@@ -399,7 +399,6 @@ new #[Layout("layouts.app")] class extends Component {
                         <tr class="uppercase text-xs text-left">
                             <th class="py-3 px-4 font-medium">Line</th>
                             <th class="py-3 px-4 font-medium">Machine</th>
-                            <th class="py-3 px-4 font-medium text-right">Count</th>
                             <th class="py-3 px-4 font-medium">Duration</th>
                             <th class="py-3 px-4 font-medium">Position</th>
                             <th class="py-3 px-4 font-medium">Range STD</th>
@@ -437,7 +436,6 @@ new #[Layout("layouts.app")] class extends Component {
                             >
                                 <td class="py-3 px-4">{{ $count->line }}</td>
                                 <td class="py-3 px-4">{{ $count->mechine }}</td>
-                                <td class="py-3 px-4 font-mono text-right">{{ number_format($count->count) }}</td>
                                 @php
                                     $durationClass = '';
                                     if (!empty($count->duration)) {

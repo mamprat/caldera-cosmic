@@ -146,10 +146,18 @@ class InsDwpPollAlarm extends Command
     private function sendLongDuration($device)
     {
         $addrDwpAlarm = $device['config'][0]['dwp_alarm'];
+        // today
+        $this->start_at = Carbon::now()->startOfDay();
+        $this->end_at = Carbon::now()->endOfDay();
         // GET LONG DURATION DATA from database
-        $longDurationData = InsDwpTimeAlarmCount::orderBy('duration', 'desc')->first();
+        $longDurationData = InsDwpTimeAlarmCount::orderBy('duration', 'desc')
+            ->whereBetween('created_at', [
+                Carbon::parse($this->start_at)->startOfDay(),
+                Carbon::parse($this->end_at)->endOfDay()
+            ])
+            ->first();
         if (empty($longDurationData)){
-            return false;
+            return [];
         }else {
             $longDurationData->toArray();
         }

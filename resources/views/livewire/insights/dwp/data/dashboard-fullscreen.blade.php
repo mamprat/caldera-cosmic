@@ -523,7 +523,7 @@ new #[Layout("layouts.app")] class extends Component {
         // Get data for all charts
         $perf = $this->getPerformanceData($this->machineData);
         $daily = $perf['daily'] ?? ['standard' => 100, 'outOfStandard' => 0];
-        $online = $this->onlineMonitoringData ?? ['online' => 100, 'offline' => 0];
+        $online = $this->onlineMonitoringData;
 
         // === NEW: Get DWP Time Constraint Chart Data ===
         $dwpData = $this->getDwpTimeConstraintData();
@@ -539,7 +539,7 @@ new #[Layout("layouts.app")] class extends Component {
                     // --- 1. Get Data from PHP ---
                     const dailyData = " . $dailyJson . ";
                     const onlineData = " . $onlineJson . ";
-                    const dwpData = " . $dwpJson . "; // === NEW ===
+                    const dwpData = " . $dwpJson . ";
 
                     // --- 2. Theme Helpers ---
                     function isDarkModeLocal(){
@@ -573,7 +573,28 @@ new #[Layout("layouts.app")] class extends Component {
                                     cutout: '70%',
                                     plugins: {
                                         legend: { display: false },
-                                        tooltip: { bodyColor: theme.textColor, titleColor: theme.textColor }
+                                        tooltip: {
+                                            callbacks: {
+                                                label: function(context){
+                                                    let label = context.label || '';
+                                                    if (label) label += ': ';
+                                                    if (context.parsed !== null) label += context.parsed.toFixed(2) + '%';
+                                                    return label;
+                                                }
+                                            }
+                                        },
+                                        datalabels: {
+                                            color: '#fff',
+                                            font: {
+                                                weight: 'bold',
+                                                size: 16
+                                            },
+                                            formatter: function(value, context) {
+                                                const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                                return percentage + '%';
+                                            }
+                                        }
                                     },
                                     responsive: true,
                                     maintainAspectRatio: false
@@ -617,6 +638,18 @@ new #[Layout("layouts.app")] class extends Component {
                                                     return label;
                                                 }
                                             }
+                                        },
+                                        datalabels: {
+                                            color: '#fff',
+                                            font: {
+                                                weight: 'bold',
+                                                size: 16
+                                            },
+                                            formatter: function(value, context) {
+                                                const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                                return percentage + '%';
+                                            }
                                         }
                                     }
                                 }
@@ -626,7 +659,7 @@ new #[Layout("layouts.app")] class extends Component {
                         console.warn('[DWP Dashboard] onlineSystemMonitoring canvas not found');
                     }
 
-                    // --- 5. === NEW: DWP TIME CONSTRAINT CHART (line) === ---
+                     // --- 5. === NEW: DWP TIME CONSTRAINT CHART (line) === ---
                     const dwpCtx = document.getElementById('dwpTimeConstraintChart');
                     if (dwpCtx) {
                         try {
@@ -647,7 +680,7 @@ new #[Layout("layouts.app")] class extends Component {
                                             color: '#e5e7eb',
                                             drawBorder: true,
                                             drawOnChartArea: true,
-                                            drawTicks: true,
+                                            drawTicks: true
                                         },
                                         ticks: {
                                             color: '#000000',
@@ -665,17 +698,17 @@ new #[Layout("layouts.app")] class extends Component {
                                         },
                                         ticks: {
                                             color: '#000000',
-                                            font: { size: 16 }
+                                            font: { size: 17 }
                                         }
                                     }
                                 },
                                 plugins: {
                                     legend: {
                                         position: 'bottom',
-                                        labels: { color: '#000000' }
+                                        labels: { color: '#1c1b1bff' }
                                     },
-                                    tooltip: {
-                                        enabled: true
+                                    datalabels: {
+                                        display: false
                                     }
                                 }
                             },
@@ -690,7 +723,7 @@ new #[Layout("layouts.app")] class extends Component {
                                                 ctx.font = 'bold 15px sans-serif';
                                                 ctx.fillStyle = dataset.borderColor;
                                                 ctx.textAlign = 'center';
-                                                ctx.fillText(value, element.x, element.y - (-15));
+                                                ctx.fillText(value, element.x, element.y - 10);
                                             }
                                         });
                                     });
@@ -710,73 +743,61 @@ new #[Layout("layouts.app")] class extends Component {
         );
     }
 
+    /**
+     * Calculate online monitoring statistics
+     * 
+     * Logic:
+     * - Online time: From first data entry today to current time
+     * - Offline time: Sum of all gaps > 50 seconds between timestamps
+     * - Downtime threshold: 50 seconds
+     */
     private function getOnlineMonitoringStats(array $machineNames): array
     {
-        $period = $this->calculatePeriod();
-        if ($period->totalDuration <= 0) {
-            return [
-                'percentages' => ['online' => 0, 'offline' => 100],
-                'total_hours' => 0, // in hours
-                'full_time_format' => "0 hours 0 minutes 0 seconds",
-                'offline_time_format' => "0 hours 0 minutes 0 seconds"
-            ];
-        }
         if (empty($machineNames)) {
             return [
                 'percentages' => ['online' => 0, 'offline' => 100],
-                'total_hours' => 0, // in hours
+                'total_hours' => 0,
                 'full_time_format' => "0 hours 0 minutes 0 seconds",
                 'offline_time_format' => "0 hours 0 minutes 0 seconds"
             ];
         }
-        $activityTimestamps = $this->getActivityTimestamps($machineNames, Carbon::parse($period->start), Carbon::parse($period->end));
-        $totalDowntime = $this->calculateTotalDowntime($activityTimestamps, Carbon::parse($period->start), Carbon::parse($period->end));
 
-        $onlineDuration = $period->totalDuration - $totalDowntime;
-
-        return [
-            'percentages' => $this->calculatePercentages($period->totalDuration, $totalDowntime),
-            'total_hours' => $onlineDuration / 3600, // in hours
-            'full_time_format' => $this->formatDuration($onlineDuration),
-            'offline_time_format' => $this->formatDuration($totalDowntime)
-        ];
-    }
-
-    private function calculatePeriod(): object
-    {
-        $start = InsDwpCount::where('created_at', '>=', now()->startOfDay())
-            ->where('created_at', '<=', now()->endOfDay())
-            ->min('created_at');
-
-        $end = now()->format('Y-m-d H:i:s');
-
-        if (!$start) {
-            return (object) [
-                'start' => now()->format('Y-m-d H:i:s'),
-                'end' => $end,
-                'totalDuration' => 0
+        // Get first and last timestamps for the selected date
+        $selectedDate = $this->start_at ? Carbon::parse($this->start_at) : Carbon::today();
+        $startOfDay = $selectedDate->copy()->startOfDay();
+        $endOfDay = $selectedDate->copy()->endOfDay();
+        
+        // Get all activity timestamps for the day
+        $activityTimestamps = $this->getActivityTimestamps($machineNames, $startOfDay, $endOfDay);
+        
+        if (empty($activityTimestamps)) {
+            return [
+                'percentages' => ['online' => 0, 'offline' => 100],
+                'total_hours' => 0,
+                'full_time_format' => "0 hours 0 minutes 0 seconds",
+                'offline_time_format' => "0 hours 0 minutes 0 seconds"
             ];
         }
 
-        $totalDuration = Carbon::parse($start)->diffInSeconds(Carbon::parse($end));
+        // Get first entry time and current time (or end of day if viewing past date)
+        $firstEntry = Carbon::parse($activityTimestamps[0]);
+        $currentTime = $selectedDate->isToday() ? Carbon::now() : $endOfDay;
+        
+        // Total duration from first entry to now
+        $totalDuration = $firstEntry->diffInSeconds($currentTime);
+        
+        // Calculate offline time (gaps > 50 seconds)
+        $totalDowntime = $this->calculateTotalDowntime($activityTimestamps, $firstEntry, $currentTime);
+        
+        // Online time = Total time - Offline time
+        $onlineDuration = max(0, $totalDuration - $totalDowntime);
 
-        return (object) [
-            'start' => $start,
-            'end' => $end,
-            'totalDuration' => $totalDuration
+        return [
+            'percentages' => $this->calculatePercentages($totalDuration, $totalDowntime),
+            'total_hours' => $onlineDuration / 3600,
+            'full_time_format' => $this->formatDuration($onlineDuration),
+            'offline_time_format' => $this->formatDuration($totalDowntime)
         ];
-    }
-
-    private function parseStartDateTime(): Carbon
-    {
-        $start = $this->start_at ? Carbon::parse($this->start_at) : now()->subDay();
-        return $start->startOfDay();
-    }
-
-    private function parseEndDateTime(): Carbon
-    {
-        $end = $this->end_at ? Carbon::parse($this->end_at) : now();
-        return $end->endOfDay();
     }
 
     private function getActivityTimestamps(array $machineNames, Carbon $start, Carbon $end): array
@@ -790,34 +811,26 @@ new #[Layout("layouts.app")] class extends Component {
 
     private function calculateTotalDowntime(array $timestamps, Carbon $periodStart, Carbon $periodEnd): int
     {
-        $downtimeThreshold = $this->getDowntimeThresholdInSeconds();
+        // Downtime threshold: 50 seconds
+        $downtimeThreshold = 50;
 
-        // If no timestamps, entire period is downtime (if it exceeds threshold)
+        // If no timestamps, no downtime calculation needed
         if (empty($timestamps)) {
-            $totalGap = $periodStart->diffInSeconds($periodEnd);
-            return $totalGap > $downtimeThreshold ? $totalGap : 0;
+            return 0;
         }
 
         $totalDowntime = 0;
 
-        // 1. Initial gap: from periodStart to first timestamp
-        $initialGap = Carbon::parse($timestamps[0])->diffInSeconds($periodStart);
-        if ($initialGap > $downtimeThreshold) {
-            $totalDowntime += $initialGap;
-        }
-
-        // 2. Middle gaps: between consecutive timestamps
+        // Calculate gaps between consecutive timestamps
         for ($i = 1; $i < count($timestamps); $i++) {
-            $gap = Carbon::parse($timestamps[$i])->diffInSeconds(Carbon::parse($timestamps[$i - 1]));
+            $prevTime = Carbon::parse($timestamps[$i - 1]);
+            $currentTime = Carbon::parse($timestamps[$i]);
+            $gap = $prevTime->diffInSeconds($currentTime);
+            
+            // If gap is more than 50 seconds, count it as downtime
             if ($gap > $downtimeThreshold) {
                 $totalDowntime += $gap;
             }
-        }
-
-        // 3. Final gap: from last timestamp to periodEnd
-        $finalGap = $periodEnd->diffInSeconds(Carbon::parse(end($timestamps)));
-        if ($finalGap > $downtimeThreshold) {
-            $totalDowntime += $finalGap;
         }
 
         return $totalDowntime;
@@ -832,15 +845,15 @@ new #[Layout("layouts.app")] class extends Component {
         $parts = [];
 
         if ($hours > 0) {
-            $parts[] = $hours . ' hr' . ($hours !== 1 ? 's' : '');
+            $parts[] = $hours . ' hour' . ($hours !== 1 ? 's' : '');
         }
 
         if ($minutes > 0) {
-            $parts[] = $minutes . ' min' . ($minutes !== 1 ? 's' : '');
+            $parts[] = $minutes . ' minute' . ($minutes !== 1 ? 's' : '');
         }
 
         if ($remainingSeconds > 0 || empty($parts)) { // Always show seconds if no other units, or if there are remaining seconds
-            $parts[] = $remainingSeconds . ' sec' . ($remainingSeconds !== 1 ? 's' : '');
+            $parts[] = $remainingSeconds . ' second' . ($remainingSeconds !== 1 ? 's' : '');
         }
 
         return implode(' ', $parts);
@@ -864,7 +877,7 @@ new #[Layout("layouts.app")] class extends Component {
 
     private function getDowntimeThresholdInSeconds(): int
     {
-        return 120; // 2 minutes
+        return 50; // 50 seconds threshold for detecting offline time
     }
 }; ?>
 
