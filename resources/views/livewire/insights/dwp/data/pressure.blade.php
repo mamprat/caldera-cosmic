@@ -831,16 +831,18 @@ new #[Layout("layouts.app")] class extends Component {
                         
                         // Calculate totals for each category across all machines
                         const categoryTotals = {};
+                        const categoryColors = {};
                         series.forEach(category => {
                             const total = category.data.reduce((sum, val) => sum + val, 0);
                             if (total > 0) {
                                 categoryTotals[category.name] = total;
+                                categoryColors[category.name] = category.color;
                             }
                         });
 
                         const labels = Object.keys(categoryTotals);
                         const values = Object.values(categoryTotals);
-                        const colors = series.map(s => s.color);
+                        const colors = labels.map(label => categoryColors[label]);
 
                         console.log('[PressurePieChart] Data:', { labels, values, colors });
 
@@ -947,16 +949,18 @@ new #[Layout("layouts.app")] class extends Component {
                         
                         // Calculate totals for each category across all machines
                         const categoryTotals = {};
+                        const categoryColors = {};
                         series.forEach(category => {
                             const total = category.data.reduce((sum, val) => sum + val, 0);
                             if (total > 0) {
                                 categoryTotals[category.name] = total;
+                                categoryColors[category.name] = category.color;
                             }
                         });
 
                         const labels = Object.keys(categoryTotals);
                         const values = Object.values(categoryTotals);
-                        const colors = series.map(s => s.color);
+                        const colors = labels.map(label => categoryColors[label]);
 
                         console.log('[PieChart] Data:', { labels, values, colors });
 

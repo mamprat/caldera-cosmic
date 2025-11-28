@@ -788,19 +788,21 @@ new class extends Component {
         }
 
         $totalDowntime = 0;
-
         // Calculate gaps between consecutive timestamps
         for ($i = 1; $i < count($timestamps); $i++) {
             $prevTime = Carbon::parse($timestamps[$i - 1]);
             $currentTime = Carbon::parse($timestamps[$i]);
             $gap = $prevTime->diffInSeconds($currentTime);
-            
+            $gaps[] = [
+                "total" => $gap,
+                "from" => $prevTime->toDateTimeString(),
+                "to" => $currentTime->toDateTimeString()
+            ];
             // If gap is more than 50 seconds, count it as downtime
             if ($gap > $downtimeThreshold) {
                 $totalDowntime += $gap;
             }
         }
-
         return $totalDowntime;
     }
 
