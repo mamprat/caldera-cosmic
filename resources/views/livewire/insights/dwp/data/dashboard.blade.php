@@ -8,6 +8,7 @@ use App\Models\InsDwpCount;
 use App\Models\InsDwpTimeAlarmCount;
 use Livewire\WithPagination;
 use Livewire\Attributes\Url;
+use App\Helpers\GlobalHelpers;
 use Carbon\Carbon;
 
 new class extends Component {
@@ -17,6 +18,7 @@ new class extends Component {
     public array $stdRange = [30, 45];
     public $lastRecord = null;
     public $view = "dashboard";
+    public $helpers;
 
     #[Url]
     public string $start_at = "";
@@ -31,16 +33,15 @@ new class extends Component {
 
     public int $totalStandart = 0;
     public int $totalOutStandart = 0;
-    public int $onlineTime = 0;
-    public string $fullTimeFormat = "";
+    public int $onlineTime = 0;    public string $fullTimeFormat = "";
+    public string $offlineTime = "";
 
     // Add new properties for the top summary boxes
     public int $timeConstraintAlarm = 0;
     public int $longestQueueTime = 0;
     public int $alarmsActive = 0;
 
-    // === NEW: Add property for online monitoring ===
-    public array $onlineMonitoringData = ['online' => 100, 'offline' => 0];
+    public array $onlineMonitoringData = [];
 
     public function mount()
     {
@@ -104,6 +105,7 @@ new class extends Component {
 
     public function updateData()
     {
+        $helpers = new GlobalHelpers();
         $machineConfigs = $this->getDataMachines($this->line);
         $machineNames = array_column($machineConfigs, 'name');
 
@@ -117,6 +119,7 @@ new class extends Component {
         $this->onlineMonitoringData = $dataOnlineMonitoring['percentages'];
         $this->onlineTime = $dataOnlineMonitoring['total_hours'] ?? 0;
         $this->fullTimeFormat = $dataOnlineMonitoring['full_time_format'] ?? "";
+        $this->offlineTime = $dataOnlineMonitoring['offline_time_format'] ?? 0;
 
         // --- Step 1: Get latest sensor reading for each machine (Your query is already efficient) ---
         $latestCountsQuery = InsDwpCount::select('mechine', 'position', 'pv', 'created_at')
@@ -135,7 +138,7 @@ new class extends Component {
         // --- Step 3 (FIXED): Get all recent records for a correct average calculation ---
         $recentRecordsQuery = InsDwpCount::whereIn('mechine', $machineNames)
             ->where('created_at', '>=', now()->subDay())
-            ->select('mechine', 'pv');
+            ->select('mechine', 'pv', 'duration');
 
         // Apply date range filter to relevant queries
         if ($this->start_at && $this->end_at) {
@@ -176,10 +179,14 @@ new class extends Component {
             $leftData = [
                 'toeHeel' => round($this->getMedian($leftWaveforms[0] ?? [0])),
                 'side' => round($this->getMedian($leftWaveforms[1] ?? [0]))
+                'toeHeel' => round($helpers->getMedian($leftWaveforms[0] ?? [0])),
+                'side' => round($helpers->getMedian($leftWaveforms[1] ?? [0]))
             ];
             $rightData = [
                 'toeHeel' => round($this->getMedian($rightWaveforms[0] ?? [0])),
                 'side' => round($this->getMedian($rightWaveforms[1] ?? [0]))
+                'toeHeel' => round($helpers->getMedian($rightWaveforms[0] ?? [0])),
+                'side' => round($helpers->getMedian($rightWaveforms[1] ?? [0]))
             ];
             // Calculate average from recent records using enhanced PV structure
             $allPeaks = [];
@@ -210,9 +217,8 @@ new class extends Component {
             $pressTimeCount = 0;
             if (isset($recentRecords[$machineName])) {
                 foreach ($recentRecords[$machineName] as $record) {
-                    $decodedPv = json_decode($record->pv, true) ?? [];
-                    if (isset($decodedPv['quality']['actual_cycle_time'])) {
-                        $avgPressTime += $decodedPv['quality']['actual_cycle_time'];
+                    if (isset($record->duration)) {
+                        $avgPressTime += $record->duration;
                         $pressTimeCount++;
                     }
                 }
@@ -362,38 +368,6 @@ new class extends Component {
         return 'normal';
     }
 
-    private function getMedian(array $array)
-    {
-        if (empty($array)) return 0;
-        // Filter out non-numeric values
-        $numericArray = array_filter($array, 'is_numeric');
-        if (empty($numericArray)) return 0;
-
-        sort($numericArray);
-        $count = count($numericArray);
-        $middle = floor(($count - 1) / 2);
-        $median = ($count % 2) ? $numericArray[$middle] : ($numericArray[$middle] + $numericArray[$middle + 1]) / 2;
-
-        return round($median);
-    }
-
-    private function getMax(array $array)
-    {
-        if (empty($array)) {
-            return 0;
-        }
-
-        // Filter out non-numeric values
-        $numericArray = array_filter($array, 'is_numeric');
-
-        if (empty($numericArray)) {
-            return 0;
-        }
-
-        // Get max value from the numeric array
-        return max($numericArray);
-    }
-
     private function getLongestDuration(){
         // GET LONG DURATION DATA from database
         $longDurationData = InsDwpTimeAlarmCount::orderBy('duration', 'desc')
@@ -521,7 +495,7 @@ new class extends Component {
         // Get data for all charts
         $perf = $this->getPerformanceData($this->machineData);
         $daily = $perf['daily'] ?? ['standard' => 100, 'outOfStandard' => 0];
-        $online = $this->onlineMonitoringData ?? ['online' => 100, 'offline' => 0];
+        $online = $this->onlineMonitoringData;
 
         // === NEW: Get DWP Time Constraint Chart Data ===
         $dwpData = $this->getDwpTimeConstraintData();
@@ -537,7 +511,7 @@ new class extends Component {
                     // --- 1. Get Data from PHP ---
                     const dailyData = " . $dailyJson . ";
                     const onlineData = " . $onlineJson . ";
-                    const dwpData = " . $dwpJson . "; // === NEW ===
+                    const dwpData = " . $dwpJson . ";
 
                     // --- 2. Theme Helpers ---
                     function isDarkModeLocal(){
@@ -571,7 +545,28 @@ new class extends Component {
                                     cutout: '70%',
                                     plugins: {
                                         legend: { display: false },
-                                        tooltip: { bodyColor: theme.textColor, titleColor: theme.textColor }
+                                        tooltip: {
+                                            callbacks: {
+                                                label: function(context){
+                                                    let label = context.label || '';
+                                                    if (label) label += ': ';
+                                                    if (context.parsed !== null) label += context.parsed.toFixed(2) + '%';
+                                                    return label;
+                                                }
+                                            }
+                                        },
+                                        datalabels: {
+                                            color: '#fff',
+                                            font: {
+                                                weight: 'bold',
+                                                size: 16
+                                            },
+                                            formatter: function(value, context) {
+                                                const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                                return percentage + '%';
+                                            }
+                                        }
                                     },
                                     responsive: true,
                                     maintainAspectRatio: false
@@ -614,6 +609,18 @@ new class extends Component {
                                                     if (context.parsed !== null) label += context.parsed.toFixed(2) + '%';
                                                     return label;
                                                 }
+                                            }
+                                        },
+                                        datalabels: {
+                                            color: '#fff',
+                                            font: {
+                                                weight: 'bold',
+                                                size: 16
+                                            },
+                                            formatter: function(value, context) {
+                                                const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                                return percentage + '%';
                                             }
                                         }
                                     }
@@ -672,6 +679,9 @@ new class extends Component {
                                         position: 'bottom',
                                         labels: { color: '#1c1b1bff' }
                                     },
+                                    datalabels: {
+                                        display: false
+                                    }
                                 }
                             },
                             plugins: [{
@@ -705,70 +715,61 @@ new class extends Component {
         );
     }
 
+    /**
+     * Calculate online monitoring statistics
+     * 
+     * Logic:
+     * - Online time: From first data entry today to current time
+     * - Offline time: Sum of all gaps > 50 seconds between timestamps
+     * - Downtime threshold: 50 seconds
+     */
     private function getOnlineMonitoringStats(array $machineNames): array
     {
-        $period = $this->calculatePeriod();
-        if ($period->totalDuration <= 0) {
-            return [
-                'percentages' => ['online' => 0, 'offline' => 100],
-                'total_hours' => 0, // in hours
-                'full_time_format' => "0 hours 0 minutes 0 seconds"
-            ];
-        }
         if (empty($machineNames)) {
             return [
                 'percentages' => ['online' => 0, 'offline' => 100],
-                'total_hours' => 0, // in hours
-                'full_time_format' => "0 hours 0 minutes 0 seconds"
+                'total_hours' => 0,
+                'full_time_format' => "0 hours 0 minutes 0 seconds",
+                'offline_time_format' => "0 hours 0 minutes 0 seconds"
             ];
         }
-        $activityTimestamps = $this->getActivityTimestamps($machineNames, Carbon::parse($period->start), Carbon::parse($period->end));
-        $totalDowntime = $this->calculateTotalDowntime($activityTimestamps, Carbon::parse($period->start), Carbon::parse($period->end));
 
-        $onlineDuration = $period->totalDuration - $totalDowntime;
+        // Get first and last timestamps for the selected date
+        $selectedDate = $this->start_at ? Carbon::parse($this->start_at) : Carbon::today();
+        $startOfDay = $selectedDate->copy()->startOfDay();
+        $endOfDay = $selectedDate->copy()->endOfDay();
+        
+        // Get all activity timestamps for the day
+        $activityTimestamps = $this->getActivityTimestamps($machineNames, $startOfDay, $endOfDay);
+        
+        if (empty($activityTimestamps)) {
+            return [
+                'percentages' => ['online' => 0, 'offline' => 100],
+                'total_hours' => 0,
+                'full_time_format' => "0 hours 0 minutes 0 seconds",
+                'offline_time_format' => "0 hours 0 minutes 0 seconds"
+            ];
+        }
+
+        // Get first entry time and current time (or end of day if viewing past date)
+        $firstEntry = Carbon::parse($activityTimestamps[0]);
+        $currentTime = $selectedDate->isToday() ? Carbon::now() : $endOfDay;
+        
+        // Total duration from first entry to now
+        $totalDuration = $firstEntry->diffInSeconds($currentTime);
+        
+        // Calculate offline time (gaps > 50 seconds)
+        $totalDowntime = $this->calculateTotalDowntime($activityTimestamps, $firstEntry, $currentTime);
+        
+        // Online time = Total time - Offline time
+        $onlineDuration = max(0, $totalDuration - $totalDowntime);
 
         return [
-            'percentages' => $this->calculatePercentages($period->totalDuration, $totalDowntime),
-            'total_hours' => $onlineDuration / 3600, // in hours
-            'full_time_format' => $this->formatDuration($onlineDuration)
+            'percentages' => $this->calculatePercentages($totalDuration, $totalDowntime),
+            'total_hours' => $onlineDuration / 3600,
+            'full_time_format' => $this->formatDuration($onlineDuration),
+            'offline_time_format' => $this->formatDuration($totalDowntime)
         ];
-    }
-
-    private function calculatePeriod(): object
-    {
-        $start = InsDwpCount::where('created_at', '>=', now()->startOfDay())
-            ->where('created_at', '<=', now()->endOfDay())
-            ->min('created_at');
-
-        $end = now()->format('Y-m-d H:i:s');
-
-        if (!$start) {
-            return (object) [
-                'start' => now()->format('Y-m-d H:i:s'),
-                'end' => $end,
-                'totalDuration' => 0
-            ];
-        }
-
-        $totalDuration = Carbon::parse($start)->diffInSeconds(Carbon::parse($end));
-
-        return (object) [
-            'start' => $start,
-            'end' => $end,
-            'totalDuration' => $totalDuration
-        ];
-    }
-
-    private function parseStartDateTime(): Carbon
-    {
-        $start = $this->start_at ? Carbon::parse($this->start_at) : now()->subDay();
-        return $start->startOfDay();
-    }
-
-    private function parseEndDateTime(): Carbon
-    {
-        $end = $this->end_at ? Carbon::parse($this->end_at) : now();
-        return $end->endOfDay();
     }
 
     private function getActivityTimestamps(array $machineNames, Carbon $start, Carbon $end): array
@@ -782,36 +783,30 @@ new class extends Component {
 
     private function calculateTotalDowntime(array $timestamps, Carbon $periodStart, Carbon $periodEnd): int
     {
-        $downtimeThreshold = $this->getDowntimeThresholdInSeconds();
+        // Downtime threshold: 50 seconds
+        $downtimeThreshold = 50;
 
-        // If no timestamps, entire period is downtime (if it exceeds threshold)
+        // If no timestamps, no downtime calculation needed
         if (empty($timestamps)) {
-            $totalGap = $periodStart->diffInSeconds($periodEnd);
-            return $totalGap > $downtimeThreshold ? $totalGap : 0;
+            return 0;
         }
 
         $totalDowntime = 0;
-
-        // 1. Initial gap: from periodStart to first timestamp
-        $initialGap = Carbon::parse($timestamps[0])->diffInSeconds($periodStart);
-        if ($initialGap > $downtimeThreshold) {
-            $totalDowntime += $initialGap;
-        }
-
-        // 2. Middle gaps: between consecutive timestamps
+        // Calculate gaps between consecutive timestamps
         for ($i = 1; $i < count($timestamps); $i++) {
-            $gap = Carbon::parse($timestamps[$i])->diffInSeconds(Carbon::parse($timestamps[$i - 1]));
+            $prevTime = Carbon::parse($timestamps[$i - 1]);
+            $currentTime = Carbon::parse($timestamps[$i]);
+            $gap = $prevTime->diffInSeconds($currentTime);
+            $gaps[] = [
+                "total" => $gap,
+                "from" => $prevTime->toDateTimeString(),
+                "to" => $currentTime->toDateTimeString()
+            ];
+            // If gap is more than 50 seconds, count it as downtime
             if ($gap > $downtimeThreshold) {
                 $totalDowntime += $gap;
             }
         }
-
-        // 3. Final gap: from last timestamp to periodEnd
-        $finalGap = $periodEnd->diffInSeconds(Carbon::parse(end($timestamps)));
-        if ($finalGap > $downtimeThreshold) {
-            $totalDowntime += $finalGap;
-        }
-
         return $totalDowntime;
     }
 
@@ -856,7 +851,7 @@ new class extends Component {
 
     private function getDowntimeThresholdInSeconds(): int
     {
-        return 120; // 2 minutes
+        return 50; // 50 seconds threshold for detecting offline time
     }
 }; ?>
 
@@ -929,44 +924,63 @@ new class extends Component {
     <!-- Content Section -->
     <div class="grid grid-cols-1 gap-6">
         <!-- Top Row: 3 Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <!-- Card 59: Performance Machine -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <!-- Performance Machine -->
             <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
-                <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-4">Performance Machine</h2>
-                <div class="">
-                    <canvas class="h-[150px]" id="dailyPerformanceChart"></canvas>
-                </div>
-                <div class="flex flex-col gap-2 mt-4">
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-green-500"></span>
-                        <span>Standard : {{ $this->totalStandart }}</span>
+                <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-4">Performance Machine DWP Pressure</h2>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="h-[150px]">
+                        <canvas id="dailyPerformanceChart" wire:ignore></canvas>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-red-600"></span>
-                        <span>Out Of Standard : {{ $this->totalOutStandart }}</span>
+                    <div class="flex flex-col gap-2 mt-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-green-500"></span>
+                            <span>Standard</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4"></span>
+                            <span class="text-sm text-gray-600 dark:text-gray-400">{{ $this->totalStandart }} EA</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-red-600"></span>
+                            <span>Out Of Standard</span>
+                        </div>
+                         <div class="flex items-center gap-2">
+                            <span class="w-4 h-4"></span>
+                            <span class="text-sm text-gray-600 dark:text-gray-400">{{ $this->totalOutStandart }} EA</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Card 60: Online System Monitoring -->
+            <!-- Online System Monitoring -->
             <div class="bg-white dark:bg-neutral-800 p-6 rounded-lg shadow-md">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-200">
                         Online System Monitoring
                     </h2>
-                    <span class="text-sm text-neutral-600 dark:text-neutral-400">{{ $this->fullTimeFormat }}</span>
                 </div>
-                <div class="relative">
-                    <canvas class="h-[150px]" id="onlineSystemMonitoring" wire:ignore></canvas>
-                </div>
-                <div class="flex flex-col gap-2 mt-4">
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-green-500"></span>
-                        <span>Online</span>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="h-[150px]">
+                        <canvas id="onlineSystemMonitoring" wire:ignore></canvas>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="w-4 h-4 rounded bg-gray-300"></span>
-                        <span>Offline</span>
+                    <div class="flex flex-col gap-1 mt-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-green-500"></span>
+                            <span>Online</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4"></span>
+                            <span class="text-sm text-gray-500 dark:text-gray-400">{{ $this->fullTimeFormat }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4 rounded bg-gray-300 dark:bg-gray-600"></span>
+                            <span>Offline</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-4 h-4"></span>
+                            <span class="text-sm text-gray-500 dark:text-gray-400">{{ $this->offlineTime }}</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1073,7 +1087,7 @@ new class extends Component {
                                 <div>
                                     <h2 class="text-md text-neutral-600 dark:text-neutral-400">Output</h2>
                                     <div class="p-2 rounded-md dark:bg-neutral-900 font-bold text-lg">
-                                        {{ $machine['output']['left'] ?? 0 }}
+                                        {{ $machine['output']['left'] ?? 0 }} pairs
                                     </div>
                                 </div>
                             </div>

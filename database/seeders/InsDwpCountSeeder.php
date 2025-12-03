@@ -22,6 +22,7 @@ class InsDwpCountSeeder extends Seeder
      */
     public function run(): void
     {
+        // testing delay info
         $this->command->info('🚀 Starting DWP count data generation (real-time simulation)...');
         $this->command->info("🕒 A delay of " . ($this->insertDelayMicroseconds / 1000) . "ms will be applied between each record.");
 

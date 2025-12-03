@@ -216,7 +216,6 @@ new class extends Component {
                 <table class="table table-sm text-sm table-truncate text-neutral-600 dark:text-neutral-400">
                     <tr class="uppercase text-xs">
                         <th>{{ __("Line") }}</th>
-                        <th>{{ __("Device") }}</th>
                         <th>{{ __("Cumulative") }}</th>
                         <th>{{ __("Incremental") }}</th>
                         <th>{{ __("Duration") }}</th>
@@ -228,7 +227,6 @@ new class extends Component {
                         @endphp
                         <tr wire:key="count-tr-{{ $count->id }}" class="hover:bg-neutral-50 dark:hover:bg-neutral-700">
                             <td>{{ $count->line }}</td>
-                            <td class="max-w-32 truncate" title="{{ $device?->name }}">{{ $device?->name ?? "N/A" }}</td>
                             <td class="font-mono">{{ number_format($count->cumulative) }}</td>
                             <td class="font-mono">
                                 @if($count->incremental > 0)

@@ -7,6 +7,7 @@ use Livewire\Attributes\Url;
 use Livewire\Attributes\On;
 use App\Models\InsDwpCount;
 use App\Models\InsDwpDevice;
+use App\Helpers\GlobalHelpers;
 use Carbon\Carbon;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\Traits\HasDateRangeFilter;
@@ -114,6 +115,21 @@ new #[Layout("layouts.app")] class extends Component {
         return max($numericArray);
     }
 
+    private function getMedian(array $array)
+    {
+        if (empty($array)) return 0;
+        // Filter out non-numeric values
+        $numericArray = array_filter($array, 'is_numeric');
+        if (empty($numericArray)) return 0;
+
+        sort($numericArray);
+        $count = count($numericArray);
+        $middle = floor(($count - 1) / 2);
+        $median = ($count % 2) ? $numericArray[$middle] : ($numericArray[$middle] + $numericArray[$middle + 1]) / 2;
+
+        return round($median);
+    }
+
     #[On("updated")]
     public function with(): array
     {
@@ -145,9 +161,9 @@ new #[Layout("layouts.app")] class extends Component {
 
                 $columns = [
                     __("Line"),
-                    __("Device"),
                     __("Cumulative"),
-                    __("Incremental"),
+                    __("Machine"),
+                    __("Duration"),
                     __("Created At"),
                 ];
 
@@ -160,9 +176,9 @@ new #[Layout("layouts.app")] class extends Component {
                             $device = $this->getDeviceForLine($count->line);
                             fputcsv($file, [
                                 $count->line,
-                                $device ? $device->name : "N/A",
                                 $count->cumulative,
-                                $count->incremental,
+                                $count->mechine,
+                                $count->duration,
                                 $count->created_at,
                             ]);
                         }
@@ -214,6 +230,51 @@ new #[Layout("layouts.app")] class extends Component {
             'direction'        => $direction,
             'is_standard'      => $isStandard,
         ];
+    }
+
+    private function repeatWaveform(array $valuesRaw, array $timestampsRaw, int $duration): array {
+        $count = count($valuesRaw);
+        if ($count === 0 || count($timestampsRaw) !== $count) {
+            return [];
+        }
+        // Normalize timestamps to seconds from start
+        $startTs = (int)($timestampsRaw[0] / 1000);
+        $secValueMap = [];
+        $maxSec = 0;
+        for ($i = 0; $i < $count; $i++) {
+            $sec = (int)($timestampsRaw[$i] / 1000) - $startTs;
+            $secValueMap[$sec] = $valuesRaw[$i];
+            if ($sec > $maxSec) $maxSec = $sec;
+        }
+        // Build result array with repeated/held values
+        $result = [];
+        $lastValue = 0;
+        for ($sec = 0; $sec <= $maxSec; $sec++) {
+            if (isset($secValueMap[$sec])) {
+                $lastValue = $secValueMap[$sec];
+            }
+            $result[] = $lastValue;
+        }
+        // add 0 for lasting seconds up to duration
+        for ($sec = $maxSec + 1; $sec < $duration; $sec++) {
+            $result[] = 0;
+        }
+
+        // Ensure result has exactly $duration elements (labels are 1..$duration)
+        // - pad with trailing zeros if too short
+        // - trim if longer
+        if (count($result) < $duration) {
+            $result = array_pad($result, $duration, 0);
+        } elseif (count($result) > $duration) {
+            $result = array_slice($result, 0, $duration);
+        }
+
+        // Always set the last duration slot to zero so the chart ends at 0
+        if ($duration > 0) {
+            $result[$duration - 1] = 0;
+        }
+
+        return $result;
     }
 };
 
@@ -338,7 +399,6 @@ new #[Layout("layouts.app")] class extends Component {
                         <tr class="uppercase text-xs text-left">
                             <th class="py-3 px-4 font-medium">Line</th>
                             <th class="py-3 px-4 font-medium">Machine</th>
-                            <th class="py-3 px-4 font-medium text-right">Count</th>
                             <th class="py-3 px-4 font-medium">Duration</th>
                             <th class="py-3 px-4 font-medium">Position</th>
                             <th class="py-3 px-4 font-medium">Range STD</th>
@@ -348,14 +408,18 @@ new #[Layout("layouts.app")] class extends Component {
                         </tr>
                     </thead>
                     <tbody>
+                        @php
+                        $helpers = new GlobalHelpers();
+                        @endphp
                         @foreach ($counts as $count)
                             @php
                                 $pv = json_decode($count->pv, true)['waveforms'];
-                                $toeHeelArray = $pv[0] ?? null;
-                                $sideArray = $pv[1] ?? null;
+                                $pvTimestamp = json_decode($count->pv, true)['timestamps'];
+                                $toeHeelArray = $this->repeatWaveform($pv[0] ?? null, $pvTimestamp ?? [], (int)($count->duration ?? 0));
+                                $sideArray = $this->repeatWaveform($pv[1] ?? null, $pvTimestamp ?? [], (int)($count->duration ?? 0));
 
-                                $toeHeelValue = $toeHeelArray ? $this->getMax($toeHeelArray) : null;
-                                $sideValue = $sideArray ? $this->getMax($sideArray) : null;
+                                $toeHeelValue = $toeHeelArray ? $this->getMedian($toeHeelArray) : null;
+                                $sideValue = $sideArray ? $this->getMedian($sideArray) : null;
 
                                 $toeHeelComparison = $toeHeelValue ? $this->compareWithStandards($toeHeelValue, $this->stdTh) : null;
                                 $sideComparison = $sideValue ? $this->compareWithStandards($sideValue, $this->stdSide) : null;
@@ -372,9 +436,36 @@ new #[Layout("layouts.app")] class extends Component {
                             >
                                 <td class="py-3 px-4">{{ $count->line }}</td>
                                 <td class="py-3 px-4">{{ $count->mechine }}</td>
-                                <td class="py-3 px-4 font-mono text-right">{{ number_format($count->count) }}</td>
+                                @php
+                                    $durationClass = '';
+                                    if (!empty($count->duration)) {
+                                        try {
+                                            $durationCarbon = Carbon::parse($count->duration);
+                                            $durationSeconds = ($durationCarbon->hour ?? 0) * 3600 + ($durationCarbon->minute ?? 0) * 60 + ($durationCarbon->second ?? 0);
+
+                                            // Apply color rules:
+                                            // <13 sec => red, 13-16 sec => green, >16 sec => orange
+                                            if ($durationSeconds < 13) {
+                                                $durationClass = 'text-red-500 font-bold';
+                                            } elseif ($durationSeconds <= 16) {
+                                                $durationClass = 'text-green-500';
+                                            } else {
+                                                $durationClass = 'text-orange-500';
+                                            }
+                                        } catch (\Exception $e) {
+                                            $durationCarbon = null;
+                                        }
+                                    } else {
+                                        $durationCarbon = null;
+                                    }
+                                @endphp
+
                                 <td class="py-3 px-4">
-                                    {{ Carbon::parse($count->duration)->format('i:s') }}
+                                    @if($durationCarbon)
+                                        <span class="{{ $durationClass }}">{{ $durationCarbon->format('i:s') }}</span>
+                                    @else
+                                        —
+                                    @endif
                                 </td>
                                 <td class="py-3 px-4">
                                     {{ ($count->position ?? '') === 'R' ? 'Right' : 'Left' }}
