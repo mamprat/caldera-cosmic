@@ -179,14 +179,10 @@ new class extends Component {
             $leftData = [
                 'toeHeel' => round($this->getMedian($leftWaveforms[0] ?? [0])),
                 'side' => round($this->getMedian($leftWaveforms[1] ?? [0]))
-                'toeHeel' => round($helpers->getMedian($leftWaveforms[0] ?? [0])),
-                'side' => round($helpers->getMedian($leftWaveforms[1] ?? [0]))
             ];
             $rightData = [
                 'toeHeel' => round($this->getMedian($rightWaveforms[0] ?? [0])),
                 'side' => round($this->getMedian($rightWaveforms[1] ?? [0]))
-                'toeHeel' => round($helpers->getMedian($rightWaveforms[0] ?? [0])),
-                'side' => round($helpers->getMedian($rightWaveforms[1] ?? [0]))
             ];
             // Calculate average from recent records using enhanced PV structure
             $allPeaks = [];
